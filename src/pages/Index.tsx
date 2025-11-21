@@ -6,6 +6,7 @@ import { DataPreview } from '@/components/DataPreview';
 import { CardinalityAnalysis } from '@/components/CardinalityAnalysis';
 import { HierarchyProposal } from '@/components/HierarchyProposal';
 import { TaxonomyResults } from '@/components/TaxonomyResults';
+import { PropertyRecommendations } from '@/components/PropertyRecommendations';
 import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
 import { useToast } from '@/hooks/use-toast';
 import { Download } from 'lucide-react';
@@ -66,9 +67,15 @@ const Index = () => {
         total_attributes: headers.length,
         hierarchy_levels: analysisResult.hierarchy.length,
       },
+      record_suggestions: {
+        record_id: analysisResult.recordIdSuggestion,
+        record_name: analysisResult.recordNameSuggestion,
+      },
       cardinality_scores: analysisResult.cardinalityScores,
       proposed_hierarchy: analysisResult.hierarchy,
       product_properties: analysisResult.properties,
+      property_recommendations: analysisResult.propertyRecommendations,
+      uom_suggestions: analysisResult.uomSuggestions,
       taxonomy_paths: analysisResult.taxonomyPaths,
     };
 
@@ -131,6 +138,12 @@ const Index = () => {
               {analysisResult && (
                 <>
                   <CardinalityAnalysis scores={analysisResult.cardinalityScores} />
+                  <PropertyRecommendations
+                    recordIdSuggestion={analysisResult.recordIdSuggestion}
+                    recordNameSuggestion={analysisResult.recordNameSuggestion}
+                    propertyRecommendations={analysisResult.propertyRecommendations}
+                    uomSuggestions={analysisResult.uomSuggestions}
+                  />
                   <HierarchyProposal
                     hierarchy={analysisResult.hierarchy}
                     properties={analysisResult.properties}
