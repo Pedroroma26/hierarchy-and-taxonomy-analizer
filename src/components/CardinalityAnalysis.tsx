@@ -51,9 +51,9 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
           <div>
-            <h2 className="text-2xl font-semibold mb-2">Cardinality Analysis</h2>
+            <h2 className="text-2xl font-semibold mb-2">Data Analysis</h2>
             <p className="text-muted-foreground">
-              Analyzing uniqueness of values across all product attributes
+              Analyzing value patterns across all product attributes
             </p>
           </div>
 

@@ -112,7 +112,7 @@ const determineHierarchy = (
   const hierarchy: HierarchyLevel[] = [];
   const properties: string[] = [];
 
-  // Determine hierarchy levels
+  // Classify headers by cardinality
   const lowCardinalityHeaders = sortedScores
     .filter((score) => score.classification === 'low')
     .map((score) => score.header);
@@ -125,48 +125,88 @@ const determineHierarchy = (
     .filter((score) => score.classification === 'high')
     .map((score) => score.header);
 
-  // Build hierarchy
-  if (lowCardinalityHeaders.length > 0) {
+  // Determine if we have enough structure for a hierarchy
+  const totalLowMedium = lowCardinalityHeaders.length + mediumCardinalityHeaders.length;
+  
+  // Build hierarchy intelligently based on available data
+  if (totalLowMedium === 0) {
+    // No repetitive data - Flat Model
     hierarchy.push({
       level: 1,
-      name: 'Parent Level',
-      headers: lowCardinalityHeaders.slice(0, 2), // Top 2 most repetitive
+      name: 'Flat Model - No Clear Hierarchy Detected',
+      headers: headers.slice(0, Math.min(2, headers.length)),
     });
-  }
-
-  if (lowCardinalityHeaders.length > 2 || mediumCardinalityHeaders.length > 0) {
-    const childHeaders = [
-      ...lowCardinalityHeaders.slice(2),
-      ...mediumCardinalityHeaders.slice(0, 2),
-    ];
-    if (childHeaders.length > 0) {
-      hierarchy.push({
-        level: 2,
-        name: 'Child Level',
-        headers: childHeaders,
-      });
-    }
-  }
-
-  if (mediumCardinalityHeaders.length > 2) {
+    properties.push(...headers.slice(Math.min(2, headers.length)));
+  } else if (totalLowMedium === 1) {
+    // Only 1 repetitive field - Single Level
+    hierarchy.push({
+      level: 1,
+      name: 'Single Category Level',
+      headers: [...lowCardinalityHeaders, ...mediumCardinalityHeaders].slice(0, 1),
+    });
+    properties.push(...highCardinalityHeaders);
+  } else if (totalLowMedium === 2) {
+    // 2 repetitive fields - Two Level Hierarchy
+    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    hierarchy.push({
+      level: 1,
+      name: 'Parent Category',
+      headers: [combinedHeaders[0]],
+    });
+    hierarchy.push({
+      level: 2,
+      name: 'Child Category',
+      headers: [combinedHeaders[1]],
+    });
+    properties.push(...highCardinalityHeaders);
+  } else if (totalLowMedium === 3) {
+    // 3 repetitive fields - Three Level Hierarchy
+    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    hierarchy.push({
+      level: 1,
+      name: 'Parent Category',
+      headers: [combinedHeaders[0]],
+    });
+    hierarchy.push({
+      level: 2,
+      name: 'Child Category',
+      headers: [combinedHeaders[1]],
+    });
     hierarchy.push({
       level: 3,
-      name: 'Grandchild Level',
-      headers: mediumCardinalityHeaders.slice(2, 4),
+      name: 'Grandchild Category',
+      headers: [combinedHeaders[2]],
     });
-  }
-
-  // All high cardinality headers become properties
-  properties.push(...highCardinalityHeaders);
-
-  // If no clear hierarchy, create a flat model
-  if (hierarchy.length === 0) {
+    properties.push(...highCardinalityHeaders);
+  } else {
+    // 4+ repetitive fields - Multi-level Hierarchy (max 3 levels)
+    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    
+    // Level 1: Use the most repetitive (lowest cardinality)
     hierarchy.push({
       level: 1,
-      name: 'Flat Model',
-      headers: headers.slice(0, 3),
+      name: 'Parent Category',
+      headers: combinedHeaders.slice(0, 1),
     });
-    properties.push(...headers.slice(3));
+    
+    // Level 2: Next most repetitive
+    hierarchy.push({
+      level: 2,
+      name: 'Child Category',
+      headers: combinedHeaders.slice(1, 2),
+    });
+    
+    // Level 3: Remaining low cardinality items
+    if (combinedHeaders.length > 2) {
+      hierarchy.push({
+        level: 3,
+        name: 'Grandchild Category',
+        headers: combinedHeaders.slice(2, 3),
+      });
+    }
+    
+    // Everything else becomes properties
+    properties.push(...combinedHeaders.slice(3), ...highCardinalityHeaders);
   }
 
   return { hierarchy, properties };
