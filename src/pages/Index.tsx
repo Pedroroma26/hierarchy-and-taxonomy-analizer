@@ -7,7 +7,13 @@ import { CardinalityAnalysis } from '@/components/CardinalityAnalysis';
 import { HierarchyProposal } from '@/components/HierarchyProposal';
 import { TaxonomyResults } from '@/components/TaxonomyResults';
 import { PropertyRecommendations } from '@/components/PropertyRecommendations';
-import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
+import { ThresholdAdjuster } from '@/components/ThresholdAdjuster';
+import { AlternativeHierarchies } from '@/components/AlternativeHierarchies';
+import { ProductDomainIndicator } from '@/components/ProductDomainIndicator';
+import { OrphanedRecordsAlert } from '@/components/OrphanedRecordsAlert';
+import { InteractiveHierarchyBuilder } from '@/components/InteractiveHierarchyBuilder';
+import { analyzeProductData, AnalysisResult, HierarchyAlternative } from '@/utils/analysisEngine';
+import { HierarchyLevel } from '@/components/HierarchyProposal';
 import { useToast } from '@/hooks/use-toast';
 import { Download } from 'lucide-react';
 
@@ -15,6 +21,7 @@ const Index = () => {
   const [headers, setHeaders] = useState<string[]>([]);
   const [data, setData] = useState<any[][]>([]);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [customThresholds, setCustomThresholds] = useState<{ low: number; medium: number } | null>(null);
   const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
@@ -41,7 +48,7 @@ const Index = () => {
       setData(extractedData);
 
       // Perform analysis
-      const result = analyzeProductData(extractedHeaders, extractedData);
+      const result = analyzeProductData(extractedHeaders, extractedData, customThresholds || undefined);
       setAnalysisResult(result);
 
       toast({
@@ -97,6 +104,71 @@ const Index = () => {
     });
   };
 
+  const handleThresholdChange = (low: number, medium: number) => {
+    setCustomThresholds({ low, medium });
+  };
+
+  const handleReanalyze = () => {
+    if (headers.length > 0 && data.length > 0) {
+      const result = analyzeProductData(headers, data, customThresholds || undefined);
+      setAnalysisResult(result);
+      toast({
+        title: 'Reanalysis Complete',
+        description: 'Data has been reanalyzed with new thresholds.',
+      });
+    }
+  };
+
+  const handleSelectAlternative = (alternative: HierarchyAlternative) => {
+    if (!analysisResult) return;
+    
+    const newResult: AnalysisResult = {
+      ...analysisResult,
+      hierarchy: alternative.hierarchy,
+      properties: alternative.properties,
+      hierarchyConfidence: alternative.confidence,
+    };
+    setAnalysisResult(newResult);
+    
+    toast({
+      title: 'Hierarchy Updated',
+      description: `Applied "${alternative.name}" structure.`,
+    });
+  };
+
+  const handlePreviewCustomHierarchy = (hierarchy: HierarchyLevel[]) => {
+    if (!analysisResult) return;
+    
+    // Recalculate properties
+    const hierarchyHeaders = hierarchy.flatMap(h => h.headers);
+    const properties = headers.filter(h => !hierarchyHeaders.includes(h));
+    
+    toast({
+      title: 'Preview Mode',
+      description: `Previewing ${hierarchy.length}-level hierarchy with ${properties.length} properties.`,
+    });
+  };
+
+  const handleApplyCustomHierarchy = (hierarchy: HierarchyLevel[]) => {
+    if (!analysisResult) return;
+    
+    const hierarchyHeaders = hierarchy.flatMap(h => h.headers);
+    const properties = headers.filter(h => !hierarchyHeaders.includes(h));
+    
+    const newResult: AnalysisResult = {
+      ...analysisResult,
+      hierarchy,
+      properties,
+      hierarchyConfidence: 0.8, // Custom hierarchies get fixed confidence
+    };
+    setAnalysisResult(newResult);
+    
+    toast({
+      title: 'Custom Hierarchy Applied',
+      description: 'Your custom hierarchy structure is now active.',
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-subtle">
       {/* Header */}
@@ -137,17 +209,47 @@ const Index = () => {
 
               {analysisResult && (
                 <>
+                  <ProductDomainIndicator domain={analysisResult.productDomain} />
+                  
                   <CardinalityAnalysis scores={analysisResult.cardinalityScores} />
+                  
+                  <ThresholdAdjuster
+                    currentThresholds={analysisResult.thresholds}
+                    onThresholdChange={handleThresholdChange}
+                    onApply={handleReanalyze}
+                  />
+                  
                   <PropertyRecommendations
                     recordIdSuggestion={analysisResult.recordIdSuggestion}
                     recordNameSuggestion={analysisResult.recordNameSuggestion}
                     propertyRecommendations={analysisResult.propertyRecommendations}
                     uomSuggestions={analysisResult.uomSuggestions}
                   />
+                  
+                  {analysisResult.alternativeHierarchies.length > 0 && (
+                    <AlternativeHierarchies
+                      alternatives={analysisResult.alternativeHierarchies}
+                      currentConfidence={analysisResult.hierarchyConfidence}
+                      onSelect={handleSelectAlternative}
+                    />
+                  )}
+                  
                   <HierarchyProposal
                     hierarchy={analysisResult.hierarchy}
                     properties={analysisResult.properties}
                   />
+                  
+                  <InteractiveHierarchyBuilder
+                    availableHeaders={headers}
+                    initialHierarchy={analysisResult.hierarchy}
+                    onPreview={handlePreviewCustomHierarchy}
+                    onApply={handleApplyCustomHierarchy}
+                  />
+                  
+                  {analysisResult.orphanedRecords.length > 0 && (
+                    <OrphanedRecordsAlert orphanedRecords={analysisResult.orphanedRecords} />
+                  )}
+                  
                   <TaxonomyResults
                     taxonomyPaths={analysisResult.taxonomyPaths}
                     onExport={handleExport}

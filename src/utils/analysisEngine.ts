@@ -20,6 +20,26 @@ export interface UomSuggestion {
   }[];
 }
 
+export interface ProductDomain {
+  type: 'Electronics' | 'Apparel' | 'Food' | 'Furniture' | 'General';
+  confidence: number;
+  indicators: string[];
+}
+
+export interface HierarchyAlternative {
+  name: string;
+  hierarchy: HierarchyLevel[];
+  properties: string[];
+  confidence: number;
+  reasoning: string;
+}
+
+export interface OrphanedRecord {
+  rowIndex: number;
+  issues: string[];
+  severity: 'low' | 'medium' | 'high';
+}
+
 export interface AnalysisResult {
   cardinalityScores: CardinalityScore[];
   hierarchy: HierarchyLevel[];
@@ -29,21 +49,54 @@ export interface AnalysisResult {
   recordNameSuggestion: string | null;
   propertyRecommendations: PropertyRecommendation[];
   uomSuggestions: UomSuggestion[];
+  productDomain: ProductDomain;
+  hierarchyConfidence: number;
+  alternativeHierarchies: HierarchyAlternative[];
+  orphanedRecords: OrphanedRecord[];
+  thresholds: {
+    low: number;
+    medium: number;
+  };
 }
 
 // Thresholds for classification
-const LOW_CARDINALITY_THRESHOLD = 0.1; // High repetition (10% unique)
-const MEDIUM_CARDINALITY_THRESHOLD = 0.5; // Medium repetition (50% unique)
+export let LOW_CARDINALITY_THRESHOLD = 0.1; // High repetition (10% unique)
+export let MEDIUM_CARDINALITY_THRESHOLD = 0.5; // Medium repetition (50% unique)
+
+export const updateThresholds = (low: number, medium: number) => {
+  LOW_CARDINALITY_THRESHOLD = low;
+  MEDIUM_CARDINALITY_THRESHOLD = medium;
+};
 
 export const analyzeProductData = (
   headers: string[],
-  data: any[][]
+  data: any[][],
+  customThresholds?: { low: number; medium: number }
 ): AnalysisResult => {
+  // Use custom thresholds if provided
+  if (customThresholds) {
+    updateThresholds(customThresholds.low, customThresholds.medium);
+  }
+
+  // Detect product domain
+  const productDomain = detectProductDomain(headers, data);
+
   // Calculate cardinality scores
   const cardinalityScores = calculateCardinalityScores(headers, data);
 
   // Determine hierarchy based on cardinality
-  const { hierarchy, properties } = determineHierarchy(cardinalityScores, headers);
+  const { hierarchy, properties, confidence } = determineHierarchy(
+    cardinalityScores, 
+    headers, 
+    productDomain
+  );
+
+  // Generate alternative hierarchies
+  const alternativeHierarchies = generateAlternativeHierarchies(
+    cardinalityScores,
+    headers,
+    productDomain
+  );
 
   // Generate taxonomy paths
   const taxonomyPaths = generateTaxonomyPaths(hierarchy, data, headers);
@@ -58,6 +111,9 @@ export const analyzeProductData = (
   // Detect UOM patterns and suggest conversions
   const uomSuggestions = analyzeUomPatterns(headers, data);
 
+  // Detect orphaned/inconsistent records
+  const orphanedRecords = detectOrphanedRecords(hierarchy, data, headers);
+
   return {
     cardinalityScores,
     hierarchy,
@@ -67,6 +123,14 @@ export const analyzeProductData = (
     recordNameSuggestion,
     propertyRecommendations,
     uomSuggestions,
+    productDomain,
+    hierarchyConfidence: confidence,
+    alternativeHierarchies,
+    orphanedRecords,
+    thresholds: {
+      low: LOW_CARDINALITY_THRESHOLD,
+      medium: MEDIUM_CARDINALITY_THRESHOLD,
+    },
   };
 };
 
@@ -100,10 +164,69 @@ const calculateCardinalityScores = (
   });
 };
 
+const detectProductDomain = (headers: string[], data: any[][]): ProductDomain => {
+  const headerText = headers.join(' ').toLowerCase();
+  const sampleData = data.slice(0, 20).flat().map(v => String(v).toLowerCase()).join(' ');
+  const allText = headerText + ' ' + sampleData;
+
+  const domainIndicators = {
+    Electronics: {
+      keywords: ['processor', 'ram', 'gb', 'cpu', 'gpu', 'screen', 'battery', 'wifi', 'bluetooth', 'voltage', 'watt', 'mhz', 'ghz', 'storage', 'ssd', 'hdd'],
+      score: 0,
+      found: [] as string[],
+    },
+    Apparel: {
+      keywords: ['size', 'color', 'fabric', 'material', 'sleeve', 'collar', 'fit', 'waist', 'inseam', 'cotton', 'polyester', 'xl', 'small', 'medium', 'large'],
+      score: 0,
+      found: [] as string[],
+    },
+    Food: {
+      keywords: ['flavor', 'ingredients', 'nutrition', 'calories', 'protein', 'carbs', 'serving', 'allergen', 'organic', 'vegan', 'gluten', 'dairy', 'expiry', 'shelf life'],
+      score: 0,
+      found: [] as string[],
+    },
+    Furniture: {
+      keywords: ['wood', 'upholstery', 'assembly', 'seat', 'drawer', 'shelf', 'table', 'chair', 'sofa', 'cabinet', 'desk', 'finish', 'veneer'],
+      score: 0,
+      found: [] as string[],
+    },
+  };
+
+  // Score each domain
+  Object.entries(domainIndicators).forEach(([domain, info]) => {
+    info.keywords.forEach(keyword => {
+      if (allText.includes(keyword)) {
+        info.score++;
+        info.found.push(keyword);
+      }
+    });
+  });
+
+  // Find best match
+  const sorted = Object.entries(domainIndicators)
+    .map(([type, info]) => ({
+      type: type as ProductDomain['type'],
+      score: info.score,
+      indicators: info.found,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const winner = sorted[0];
+  const totalKeywords = Object.values(domainIndicators).reduce((sum, d) => sum + d.keywords.length, 0);
+  const confidence = winner.score > 0 ? Math.min(winner.score / 5, 0.95) : 0.3;
+
+  return {
+    type: winner.score > 2 ? winner.type : 'General',
+    confidence,
+    indicators: winner.indicators.slice(0, 5),
+  };
+};
+
 const determineHierarchy = (
   cardinalityScores: CardinalityScore[],
-  headers: string[]
-): { hierarchy: HierarchyLevel[]; properties: string[] } => {
+  headers: string[],
+  productDomain: ProductDomain
+): { hierarchy: HierarchyLevel[]; properties: string[]; confidence: number } => {
   // Sort by cardinality (low to high)
   const sortedScores = [...cardinalityScores].sort(
     (a, b) => a.cardinality - b.cardinality
@@ -127,6 +250,19 @@ const determineHierarchy = (
 
   // Determine if we have enough structure for a hierarchy
   const totalLowMedium = lowCardinalityHeaders.length + mediumCardinalityHeaders.length;
+  let confidence = 0.5;
+
+  // Apply domain-specific logic
+  if (productDomain.type === 'Apparel') {
+    // For apparel, size and color are typically variants, not hierarchy
+    const variantHeaders = lowCardinalityHeaders.filter(h => 
+      !['size', 'color', 'colour'].some(v => h.toLowerCase().includes(v))
+    );
+    
+    if (variantHeaders.length < totalLowMedium) {
+      confidence = 0.7; // Higher confidence when we filter out variants
+    }
+  }
   
   // Build hierarchy intelligently based on available data
   if (totalLowMedium === 0) {
@@ -137,6 +273,7 @@ const determineHierarchy = (
       headers: headers.slice(0, Math.min(2, headers.length)),
     });
     properties.push(...headers.slice(Math.min(2, headers.length)));
+    confidence = 0.3;
   } else if (totalLowMedium === 1) {
     // Only 1 repetitive field - Single Level
     hierarchy.push({
@@ -145,6 +282,7 @@ const determineHierarchy = (
       headers: [...lowCardinalityHeaders, ...mediumCardinalityHeaders].slice(0, 1),
     });
     properties.push(...highCardinalityHeaders);
+    confidence = 0.6;
   } else if (totalLowMedium === 2) {
     // 2 repetitive fields - Two Level Hierarchy
     const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
@@ -159,6 +297,7 @@ const determineHierarchy = (
       headers: [combinedHeaders[1]],
     });
     properties.push(...highCardinalityHeaders);
+    confidence = 0.75;
   } else if (totalLowMedium === 3) {
     // 3 repetitive fields - Three Level Hierarchy
     const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
@@ -178,6 +317,7 @@ const determineHierarchy = (
       headers: [combinedHeaders[2]],
     });
     properties.push(...highCardinalityHeaders);
+    confidence = 0.85;
   } else {
     // 4+ repetitive fields - Multi-level Hierarchy (max 3 levels)
     const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
@@ -207,9 +347,136 @@ const determineHierarchy = (
     
     // Everything else becomes properties
     properties.push(...combinedHeaders.slice(3), ...highCardinalityHeaders);
+    confidence = 0.8;
   }
 
-  return { hierarchy, properties };
+  return { hierarchy, properties, confidence };
+};
+
+const generateAlternativeHierarchies = (
+  cardinalityScores: CardinalityScore[],
+  headers: string[],
+  productDomain: ProductDomain
+): HierarchyAlternative[] => {
+  const alternatives: HierarchyAlternative[] = [];
+  const sortedScores = [...cardinalityScores].sort((a, b) => a.cardinality - b.cardinality);
+  
+  const lowHeaders = sortedScores.filter(s => s.classification === 'low').map(s => s.header);
+  const mediumHeaders = sortedScores.filter(s => s.classification === 'medium').map(s => s.header);
+  const highHeaders = sortedScores.filter(s => s.classification === 'high').map(s => s.header);
+  const combinedHeaders = [...lowHeaders, ...mediumHeaders];
+
+  // Alternative 1: Two-level hierarchy (if we have 3+ repetitive fields)
+  if (combinedHeaders.length >= 3) {
+    const hierarchy: HierarchyLevel[] = [
+      { level: 1, name: 'Parent Category', headers: combinedHeaders.slice(0, 1) },
+      { level: 2, name: 'Child Category', headers: combinedHeaders.slice(1, 2) },
+    ];
+    const properties = [...combinedHeaders.slice(2), ...highHeaders];
+    
+    alternatives.push({
+      name: 'Two-Level Structure',
+      hierarchy,
+      properties,
+      confidence: 0.7,
+      reasoning: 'Simpler structure with two levels, treating remaining fields as properties',
+    });
+  }
+
+  // Alternative 2: Flat model with primary grouping
+  if (combinedHeaders.length >= 1) {
+    const hierarchy: HierarchyLevel[] = [
+      { level: 1, name: 'Primary Category', headers: combinedHeaders.slice(0, 1) },
+    ];
+    const properties = [...combinedHeaders.slice(1), ...highHeaders];
+    
+    alternatives.push({
+      name: 'Flat Model with Grouping',
+      hierarchy,
+      properties,
+      confidence: 0.6,
+      reasoning: 'Single level grouping, all other fields as product attributes',
+    });
+  }
+
+  // Alternative 3: Detailed hierarchy (if we have 4+ fields)
+  if (combinedHeaders.length >= 4) {
+    const hierarchy: HierarchyLevel[] = [
+      { level: 1, name: 'Parent Category', headers: [combinedHeaders[0]] },
+      { level: 2, name: 'Child Category', headers: [combinedHeaders[1]] },
+      { level: 3, name: 'Subcategory', headers: [combinedHeaders[2]] },
+    ];
+    const properties = [...combinedHeaders.slice(3), ...highHeaders];
+    
+    alternatives.push({
+      name: 'Three-Level Detailed',
+      hierarchy,
+      properties,
+      confidence: 0.75,
+      reasoning: 'Detailed three-level taxonomy for complex categorization',
+    });
+  }
+
+  return alternatives.slice(0, 3); // Return max 3 alternatives
+};
+
+const detectOrphanedRecords = (
+  hierarchy: HierarchyLevel[],
+  data: any[][],
+  headers: string[]
+): OrphanedRecord[] => {
+  const orphaned: OrphanedRecord[] = [];
+  const hierarchyHeaders = hierarchy.flatMap(h => h.headers);
+  
+  data.forEach((row, rowIndex) => {
+    const issues: string[] = [];
+    let severity: OrphanedRecord['severity'] = 'low';
+
+    // Check for missing hierarchy values
+    hierarchyHeaders.forEach(header => {
+      const colIndex = headers.indexOf(header);
+      const value = row[colIndex];
+      if (!value || value === '' || value === null || value === undefined) {
+        issues.push(`Missing value for hierarchy field: ${header}`);
+        severity = 'high';
+      }
+    });
+
+    // Check for unique combinations (potential duplicates)
+    const hierarchyValues = hierarchyHeaders.map(h => {
+      const idx = headers.indexOf(h);
+      return row[idx];
+    }).filter(Boolean);
+
+    if (hierarchyValues.length < hierarchyHeaders.length) {
+      issues.push('Incomplete hierarchy path');
+      // Only set to medium if not already high
+      if (severity === 'low') {
+        severity = 'medium';
+      }
+    }
+
+    // Check for extreme outliers in numeric fields
+    headers.forEach((header, colIndex) => {
+      const value = row[colIndex];
+      if (value && !isNaN(Number(value))) {
+        const columnValues = data.map(r => r[colIndex]).filter(v => v && !isNaN(Number(v))).map(Number);
+        const mean = columnValues.reduce((a, b) => a + b, 0) / columnValues.length;
+        const stdDev = Math.sqrt(columnValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / columnValues.length);
+        
+        if (Math.abs(Number(value) - mean) > 3 * stdDev) {
+          issues.push(`Outlier value in ${header}: ${value}`);
+          // Outliers are low severity, don't change if already higher
+        }
+      }
+    });
+
+    if (issues.length > 0) {
+      orphaned.push({ rowIndex: rowIndex + 2, issues, severity }); // +2 for header row and 0-index
+    }
+  });
+
+  return orphaned.slice(0, 50); // Return max 50 orphaned records
 };
 
 const generateTaxonomyPaths = (
