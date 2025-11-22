@@ -20,7 +20,7 @@ export const DataPreview = ({ headers, data }: DataPreviewProps) => {
           <div>
             <h2 className="text-2xl font-semibold mb-2">Data Preview</h2>
             <p className="text-muted-foreground">
-              Showing first {Math.min(50, data.length)} rows of {data.length} total products
+              Showing first {Math.min(10, data.length)} rows of {data.length} total products
             </p>
           </div>
           
@@ -37,7 +37,7 @@ export const DataPreview = ({ headers, data }: DataPreviewProps) => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.slice(0, 50).map((row, rowIndex) => (
+                  {data.slice(0, 10).map((row, rowIndex) => (
                     <TableRow key={rowIndex} className="hover:bg-muted/30">
                       {row.map((cell, cellIndex) => (
                         <TableCell key={cellIndex} className="whitespace-nowrap">

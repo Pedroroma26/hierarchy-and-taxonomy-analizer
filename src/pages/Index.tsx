@@ -12,16 +12,41 @@ import { AlternativeHierarchies } from '@/components/AlternativeHierarchies';
 import { ProductDomainIndicator } from '@/components/ProductDomainIndicator';
 import { OrphanedRecordsAlert } from '@/components/OrphanedRecordsAlert';
 import { InteractiveHierarchyBuilder } from '@/components/InteractiveHierarchyBuilder';
+import { HeaderSelector } from '@/components/HeaderSelector';
+import { TaxonomyTreeVisualization } from '@/components/TaxonomyTreeVisualization';
+import { DataValidationWarnings } from '@/components/DataValidationWarnings';
+import { UomFilterConfig } from '@/components/UomFilterConfig';
+import { PropertyHierarchyMapping } from '@/components/PropertyHierarchyMapping';
+import { BestPracticesRecommendations } from '@/components/BestPracticesRecommendations';
 import { analyzeProductData, AnalysisResult, HierarchyAlternative } from '@/utils/analysisEngine';
 import { HierarchyLevel } from '@/components/HierarchyProposal';
+import { generateExportReport, buildTaxonomyTree } from '@/utils/exportReport';
+import { validateData } from '@/utils/dataValidation';
+import { generatePDFReport } from '@/utils/pdfExport';
 import { useToast } from '@/hooks/use-toast';
-import { Download } from 'lucide-react';
+import { Download, CheckCircle2, XCircle, Play, FileJson, FileText } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const Index = () => {
+  const [allHeaders, setAllHeaders] = useState<string[]>([]);
+  const [selectedHeaders, setSelectedHeaders] = useState<string[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [data, setData] = useState<any[][]>([]);
+  const [showHeaderSelection, setShowHeaderSelection] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [customThresholds, setCustomThresholds] = useState<{ low: number; medium: number } | null>(null);
+  const [taxonomyTree, setTaxonomyTree] = useState<any>(null);
+  const [validationResult, setValidationResult] = useState<any>(null);
+  const [excludedUomFields, setExcludedUomFields] = useState<string[]>([]);
   const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
@@ -34,7 +59,7 @@ const Index = () => {
 
       if (jsonData.length < 2) {
         toast({
-          title: 'Invalid file',
+          title: 'Invalid File',
           description: 'The file must contain at least a header row and one data row.',
           variant: 'destructive',
         });
@@ -44,16 +69,15 @@ const Index = () => {
       const extractedHeaders = jsonData[0] as string[];
       const extractedData = jsonData.slice(1);
 
-      setHeaders(extractedHeaders);
+      // Store all headers and data, show header selection
+      setAllHeaders(extractedHeaders);
       setData(extractedData);
-
-      // Perform analysis
-      const result = analyzeProductData(extractedHeaders, extractedData, customThresholds || undefined);
-      setAnalysisResult(result);
+      setShowHeaderSelection(true);
+      setAnalysisResult(null);
 
       toast({
-        title: 'Analysis Complete',
-        description: 'Your product data has been analyzed successfully.',
+        title: 'File Loaded',
+        description: 'Select the columns you want to analyze.',
       });
     } catch (error) {
       console.error('Error processing file:', error);
@@ -65,26 +89,42 @@ const Index = () => {
     }
   };
 
-  const handleExport = () => {
+  const handleHeaderSelection = (selected: string[]) => {
+    setSelectedHeaders(selected);
+    setHeaders(selected);
+    setShowHeaderSelection(false);
+
+    // Filter data to only include selected headers
+    const selectedIndices = selected.map(h => allHeaders.indexOf(h));
+    const filteredData = data.map(row => 
+      selectedIndices.map(idx => row[idx])
+    );
+    setData(filteredData);
+
+    // Perform analysis with selected headers
+    const result = analyzeProductData(selected, filteredData, customThresholds || undefined);
+    setAnalysisResult(result);
+
+    // Build taxonomy tree with excluded UOM fields
+    const tree = buildTaxonomyTree(result.hierarchy, filteredData, selected, excludedUomFields);
+    setTaxonomyTree(tree);
+
+    // Validate data quality
+    const hierarchyHeaders = result.hierarchy.flatMap(h => h.headers);
+    const validation = validateData(selected, filteredData, hierarchyHeaders);
+    setValidationResult(validation);
+
+    toast({
+      title: 'Analysis Complete',
+      description: `Analyzed ${selected.length} attributes from ${filteredData.length} products.`,
+    });
+  };
+
+  const handleExportJSON = () => {
     if (!analysisResult) return;
 
-    const exportData = {
-      analysis_summary: {
-        total_products: data.length,
-        total_attributes: headers.length,
-        hierarchy_levels: analysisResult.hierarchy.length,
-      },
-      record_suggestions: {
-        record_id: analysisResult.recordIdSuggestion,
-        record_name: analysisResult.recordNameSuggestion,
-      },
-      cardinality_scores: analysisResult.cardinalityScores,
-      proposed_hierarchy: analysisResult.hierarchy,
-      product_properties: analysisResult.properties,
-      property_recommendations: analysisResult.propertyRecommendations,
-      uom_suggestions: analysisResult.uomSuggestions,
-      taxonomy_paths: analysisResult.taxonomyPaths,
-    };
+    // Generate comprehensive export report
+    const exportData = generateExportReport(analysisResult, headers, data);
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], {
       type: 'application/json',
@@ -92,16 +132,36 @@ const Index = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'taxonomy-analysis-results.json';
+    a.download = `product-taxonomy-analysis-${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
     toast({
-      title: 'Export Successful',
-      description: 'Analysis results have been downloaded.',
+      title: 'JSON Export Successful',
+      description: 'Comprehensive analysis report has been downloaded.',
     });
+  };
+
+  const handleExportPDF = () => {
+    if (!analysisResult || !taxonomyTree) return;
+
+    try {
+      generatePDFReport(analysisResult, headers, data, taxonomyTree);
+      
+      toast({
+        title: 'PDF Export Successful',
+        description: 'Analysis report has been generated as PDF.',
+      });
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      toast({
+        title: 'PDF Export Failed',
+        description: 'There was an error generating the PDF report.',
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleThresholdChange = (low: number, medium: number) => {
@@ -184,15 +244,24 @@ const Index = () => {
               </p>
             </div>
             {analysisResult && (
-              <motion.button
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                onClick={handleExport}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:shadow-glow transition-all"
-              >
-                <Download className="w-4 h-4" />
-                <span className="hidden sm:inline">Export All</span>
-              </motion.button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="gap-2">
+                    <Download className="w-4 h-4" />
+                    <span className="hidden sm:inline">Export Report</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={handleExportJSON}>
+                    <FileJson className="w-4 h-4 mr-2" />
+                    Export as JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportPDF}>
+                    <FileText className="w-4 h-4 mr-2" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
         </div>
@@ -203,13 +272,37 @@ const Index = () => {
         <div className="space-y-8">
           <FileUpload onFileUpload={handleFileUpload} />
 
-          {data.length > 0 && (
+          {showHeaderSelection && allHeaders.length > 0 && (
+            <>
+              <HeaderSelector 
+                headers={allHeaders} 
+                onConfirm={handleHeaderSelection}
+              />
+              
+              <UomFilterConfig
+                headers={allHeaders}
+                onConfigChange={setExcludedUomFields}
+              />
+            </>
+          )}
+
+          {!showHeaderSelection && data.length > 0 && (
             <>
               <DataPreview headers={headers} data={data} />
 
               {analysisResult && (
                 <>
                   <ProductDomainIndicator domain={analysisResult.productDomain} />
+                  
+                  {/* CORE: Property-to-Hierarchy Mapping */}
+                  <PropertyHierarchyMapping analysisResult={analysisResult} />
+                  
+                  {/* CORE: Best Practices & Recommendations */}
+                  <BestPracticesRecommendations analysisResult={analysisResult} />
+                  
+                  {validationResult && (
+                    <DataValidationWarnings validation={validationResult} />
+                  )}
                   
                   <CardinalityAnalysis scores={analysisResult.cardinalityScores} />
                   
@@ -250,9 +343,13 @@ const Index = () => {
                     <OrphanedRecordsAlert orphanedRecords={analysisResult.orphanedRecords} />
                   )}
                   
+                  {taxonomyTree && (
+                    <TaxonomyTreeVisualization tree={taxonomyTree} />
+                  )}
+                  
                   <TaxonomyResults
                     taxonomyPaths={analysisResult.taxonomyPaths}
-                    onExport={handleExport}
+                    onExport={handleExportJSON}
                   />
                 </>
               )}

@@ -51,9 +51,9 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
           <div>
-            <h2 className="text-2xl font-semibold mb-2">Data Analysis</h2>
+            <h2 className="text-2xl font-semibold mb-2">Data Pattern Analysis</h2>
             <p className="text-muted-foreground">
-              Analyzing value patterns across all product attributes
+              Analyzing repetition and uniqueness patterns in product attributes
             </p>
           </div>
 
@@ -80,7 +80,7 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
                 
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Cardinality Score</span>
+                    <span className="text-muted-foreground">Uniqueness Index</span>
                     <span className="font-semibold">{(score.cardinality * 100).toFixed(1)}%</span>
                   </div>
                   <Progress value={score.cardinality * 100} className="h-2" />
