@@ -10,7 +10,8 @@ export const generatePDFReport = (
   analysisResult: AnalysisResult,
   headers: string[],
   data: any[][],
-  taxonomyTree: TaxonomyTreeNode
+  taxonomyTree: TaxonomyTreeNode,
+  validationResult?: any
 ): void => {
   const doc = new jsPDF();
   let yPosition = 20;
@@ -377,46 +378,53 @@ export const generatePDFReport = (
   // ===== DATA QUALITY SUMMARY =====
   doc.addPage();
   yPosition = 20;
-  addSectionTitle('Data Quality Summary');
+  addSectionTitle('Data Quality Issues - Actionable Report');
 
-  if (analysisResult.orphanedRecords.length > 0) {
-    const orphanedPercentage = ((analysisResult.orphanedRecords.length / data.length) * 100).toFixed(1);
-    
+  if (validationResult && validationResult.warnings.length > 0) {
     doc.setFillColor(254, 226, 226);
-    doc.roundedRect(20, yPosition, 170, 25, 2, 2, 'F');
+    doc.roundedRect(20, yPosition, 170, 20, 2, 2, 'F');
     
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(185, 28, 28);
-    doc.text('⚠ Data Quality Issues Detected', 25, yPosition + 8);
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
+    doc.text(`⚠ ${validationResult.totalIssues} Data Quality Issues Found`, 25, yPosition + 13);
     doc.setTextColor(0, 0, 0);
-    doc.text(`${analysisResult.orphanedRecords.length} orphaned records (${orphanedPercentage}%)`, 25, yPosition + 18);
     
-    yPosition += 35;
+    yPosition += 30;
 
-    const orphanedData = analysisResult.orphanedRecords.slice(0, 15).map(record => [
-      `Row ${record.rowIndex + 1}`,
-      record.severity.toUpperCase(),
-      record.issues.join('; ').substring(0, 80)
-    ]);
-
-    autoTable(doc, {
-      startY: yPosition,
-      head: [['Row', 'Severity', 'Issues']],
-      body: orphanedData,
-      theme: 'striped',
-      headStyles: { fillColor: [220, 38, 38] },
-      margin: { left: 20, right: 20 },
+    // Show each warning with practical details
+    validationResult.warnings.slice(0, 10).forEach((warning: any) => {
+      checkPageBreak(40);
+      
+      doc.setFillColor(250, 250, 250);
+      doc.roundedRect(20, yPosition, 170, 35, 2, 2, 'F');
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(warning.title, 25, yPosition + 7);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(warning.message, 25, yPosition + 14);
+      
+      // Excel rows - PRACTICAL INFO
+      const rowsText = `Excel rows: ${warning.affectedRows.slice(0, 10).join(', ')}`;
+      doc.setFont('helvetica', 'italic');
+      doc.text(rowsText, 25, yPosition + 21);
+      
+      // Suggestion
+      doc.setFont('helvetica', 'normal');
+      const suggestionLines = doc.splitTextToSize(warning.suggestion, 160);
+      doc.text(suggestionLines[0], 25, yPosition + 28);
+      
+      yPosition += 40;
     });
 
-    if (analysisResult.orphanedRecords.length > 15) {
-      yPosition = (doc as any).lastAutoTable.finalY + 5;
+    if (validationResult.warnings.length > 10) {
+      checkPageBreak(10);
       doc.setFontSize(9);
       doc.setFont('helvetica', 'italic');
-      doc.text(`(Showing 15 of ${analysisResult.orphanedRecords.length} issues)`, 20, yPosition);
+      doc.text(`(Showing 10 of ${validationResult.warnings.length} issues - see JSON export for complete list)`, 20, yPosition);
     }
   } else {
     doc.setFillColor(220, 252, 231);
@@ -425,7 +433,7 @@ export const generatePDFReport = (
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(21, 128, 61);
-    doc.text('✓ No Data Quality Issues', 25, yPosition + 13);
+    doc.text('✓ No Data Quality Issues Detected', 25, yPosition + 13);
     doc.setTextColor(0, 0, 0);
   }
 

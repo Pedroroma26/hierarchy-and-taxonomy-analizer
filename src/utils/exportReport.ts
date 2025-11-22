@@ -23,13 +23,12 @@ export interface PropertyHierarchyMapping {
 
 /**
  * Build a complete taxonomy tree from the data
- * Excludes UOM and measurement-related fields
+ * Automatically excludes UOM and measurement-related fields
  */
 export const buildTaxonomyTree = (
   hierarchy: HierarchyLevel[],
   data: any[][],
-  headers: string[],
-  customExcludedFields: string[] = []
+  headers: string[]
 ): TaxonomyTreeNode => {
   if (hierarchy.length === 0 || (hierarchy.length === 1 && hierarchy[0].headers.length === 0)) {
     return {
@@ -40,19 +39,73 @@ export const buildTaxonomyTree = (
     };
   }
 
+  // Auto-exclude measurement fields
+  const MEASUREMENT_KEYWORDS = [
+    'uom', 'unit', 'measure', 'measurement', 'dimension',
+    'weight', 'height', 'width', 'depth', 'length', 'size',
+    'zuc', 'zun', 'numerator', 'denominator',
+    'date', 'time', 'created', 'modified', 'valid', 'expiry'
+  ];
+
   const hierarchyHeaders = hierarchy.flatMap(h => h.headers);
-  
-  // Filter out UOM-related headers and custom excluded fields
-  const uomKeywords = ['uom', 'unit', 'measure', 'measurement', 'dimension', 'weight', 'height', 'width', 'depth', 'length', 'size'];
   const filteredHierarchyHeaders = hierarchyHeaders.filter(header => {
-    // Check if in custom excluded list
-    if (customExcludedFields.includes(header)) {
-      return false;
-    }
-    // Check if matches UOM keywords
     const headerLower = header.toLowerCase();
-    return !uomKeywords.some(kw => headerLower.includes(kw));
+    return !MEASUREMENT_KEYWORDS.some(kw => headerLower.includes(kw));
   });
+
+  // Helper: Check if value is text-based (prefer for taxonomy)
+  const isTextBased = (value: any): boolean => {
+    if (value === null || value === undefined || value === '') return false;
+    const str = String(value);
+    // Prefer values with letters, not just numbers
+    return /[a-zA-Z]/.test(str) && str.length > 0;
+  };
+
+  // Helper: Count words in a value (prefer 1-2 words)
+  const countWords = (value: any): number => {
+    if (!value) return 0;
+    const str = String(value).trim();
+    return str.split(/\s+/).filter(w => w.length > 0).length;
+  };
+
+  // Helper: Score header for taxonomy tree (prefer SHORT names 1-2 words, not codes)
+  const scoreHeaderForTaxonomy = (header: string, headerIndex: number): number => {
+    let score = 0;
+    const lower = header.toLowerCase();
+    
+    // Prefer name-like fields
+    if (lower.includes('name') || lower.includes('description') || lower.includes('title')) score += 100;
+    if (lower.includes('category') || lower.includes('sector') || lower.includes('division')) score += 80;
+    if (lower.includes('brand') || lower.includes('type') || lower.includes('class')) score += 60;
+    
+    // Penalize code-like fields
+    if (lower.includes('code') || lower.includes('id') || lower.includes('number')) score -= 50;
+    if (/^[a-z]\d+$/i.test(header)) score -= 30; // L1, L2, etc.
+    
+    // Count text-based values
+    const textCount = data.filter(row => isTextBased(row[headerIndex])).length;
+    score += textCount / data.length * 50; // 0-50 points based on text ratio
+    
+    // CRITICAL: Prefer SHORT values (1-2 words)
+    const avgWordCount = data.reduce((sum, row) => {
+      const value = row[headerIndex];
+      return sum + countWords(value);
+    }, 0) / data.length;
+    
+    // Bonus for 1-2 word averages, penalty for long phrases
+    if (avgWordCount <= 2) score += 100; // HUGE bonus for short names
+    else if (avgWordCount <= 3) score += 50;
+    else if (avgWordCount > 5) score -= 80; // Big penalty for long phrases
+    
+    return score;
+  };
+
+  // Sort headers to prioritize names/phrases for taxonomy tree
+  const sortedHeaders = [...filteredHierarchyHeaders]
+    .map(h => ({ header: h, score: scoreHeaderForTaxonomy(h, headers.indexOf(h)) }))
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.header)
+    .slice(0, 4); // MAX 4 levels for taxonomy tree
 
   if (filteredHierarchyHeaders.length === 0) {
     return {
@@ -70,14 +123,31 @@ export const buildTaxonomyTree = (
     productCount: data.length,
   };
 
-  // Build tree structure
+  // Build tree structure using sorted headers (text-based first)
   data.forEach((row) => {
     let currentNode = root;
+    let skipRow = false; // Skip row if any level has missing data
 
-    filteredHierarchyHeaders.forEach((header, levelIndex) => {
+    sortedHeaders.forEach((header, levelIndex) => {
+      if (skipRow) return; // Skip rest of levels if already invalid
+      
       const headerIndex = headers.indexOf(header);
       const value = row[headerIndex];
-      const valueName = value !== null && value !== undefined && value !== '' ? String(value) : 'Unknown';
+      
+      // CRITICAL: Skip rows with missing/empty values - don't create "Unknown" branches
+      if (value === null || value === undefined || value === '' || String(value).trim() === '') {
+        skipRow = true;
+        return;
+      }
+      
+      const valueName = String(value).trim();
+      
+      // Also skip if value is literally "Unknown" or "unknown" (unless it's real data)
+      const lowerValue = valueName.toLowerCase();
+      if (lowerValue === 'unknown' || lowerValue === 'n/a' || lowerValue === 'null' || lowerValue === 'undefined') {
+        skipRow = true;
+        return;
+      }
 
       // Find or create child node
       let childNode = currentNode.children.find(child => child.name === valueName);

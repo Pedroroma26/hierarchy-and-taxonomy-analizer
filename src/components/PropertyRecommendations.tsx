@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +11,9 @@ import {
   CheckCircle, 
   AlertCircle,
   Ruler,
-  ArrowRight
+  ArrowRight,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { PropertyRecommendation, UomSuggestion } from '@/utils/analysisEngine';
 
@@ -27,6 +30,7 @@ export const PropertyRecommendations = ({
   propertyRecommendations,
   uomSuggestions,
 }: PropertyRecommendationsProps) => {
+  const [isExpanded, setIsExpanded] = useState(false);
   const getDataTypeIcon = (type: string) => {
     switch (type) {
       case 'number':
@@ -77,13 +81,21 @@ export const PropertyRecommendations = ({
     >
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-semibold mb-2">Property Recommendations</h2>
+          <div 
+            className="cursor-pointer"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
+              {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+              Property Recommendations
+            </h2>
             <p className="text-muted-foreground">
               Data type suggestions and optimization opportunities
             </p>
           </div>
 
+          {isExpanded && (
+          <>
           {/* Record ID and Name Suggestions */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="p-4 bg-primary/5 border-primary/20">
@@ -222,6 +234,8 @@ export const PropertyRecommendations = ({
                 ))}
               </div>
             </div>
+          )}
+          </>
           )}
         </div>
       </Card>

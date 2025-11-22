@@ -1,6 +1,11 @@
 import { CardinalityScore } from '@/components/CardinalityAnalysis';
 import { HierarchyLevel } from '@/components/HierarchyProposal';
-import { TaxonomyPath } from '@/components/TaxonomyResults';
+
+export interface TaxonomyPath {
+  path: string[];
+  productCount: number;
+  properties: string[];
+}
 
 export interface PropertyRecommendation {
   header: string;
@@ -46,6 +51,7 @@ export interface AnalysisResult {
   cardinalityScores: CardinalityScore[];
   hierarchy: HierarchyLevel[];
   properties: string[];
+  propertiesWithoutValues: string[]; // Properties with no data - uncertain hierarchy level
   taxonomyPaths: TaxonomyPath[];
   recordIdSuggestion: string | null;
   recordNameSuggestion: string | null;
@@ -87,10 +93,11 @@ export const analyzeProductData = (
   const cardinalityScores = calculateCardinalityScores(headers, data);
 
   // Determine hierarchy based on cardinality
-  const { hierarchy, properties, confidence } = determineHierarchy(
+  const { hierarchy, properties, confidence, propertiesWithoutValues } = determineHierarchy(
     cardinalityScores, 
     headers, 
-    productDomain
+    productDomain,
+    data
   );
 
   // Generate alternative hierarchies
@@ -120,6 +127,7 @@ export const analyzeProductData = (
     cardinalityScores,
     hierarchy,
     properties,
+    propertiesWithoutValues,
     taxonomyPaths,
     recordIdSuggestion,
     recordNameSuggestion,
@@ -224,18 +232,58 @@ const detectProductDomain = (headers: string[], data: any[][]): ProductDomain =>
   };
 };
 
+// Helper: Detect if field is likely a Record ID (numbers, codes, IDs)
+const isLikelyRecordId = (header: string): boolean => {
+  const lower = header.toLowerCase();
+  
+  // SKU/GTIN/EAN keywords (prioritize for lowest level)
+  const skuKeywords = ['sku', 'gtin', 'ean', 'upc', 'barcode', 'article', 'zuc', 'product_id', 'item_id', 'zun'];
+  if (skuKeywords.some(kw => lower.includes(kw))) {
+    return true;
+  }
+  
+  // General ID detection
+  const idKeywords = ['id', 'code', 'number', 'key', 'identifier'];
+  return idKeywords.some(kw => lower.includes(kw)) && !lower.includes('name') && !lower.includes('description');
+};
+
+// Helper: Detect if field is likely a Record Name (text descriptions)
+const isLikelyRecordName = (header: string): boolean => {
+  const lower = header.toLowerCase();
+  const nameKeywords = ['name', 'title', 'description', 'label', 'text', 'brand', 'category', 'sector', 'division'];
+  // Prefer single words or short phrases, avoid numbers
+  return nameKeywords.some(kw => lower.includes(kw)) && !lower.includes('id') && !lower.includes('code');
+};
+
 const determineHierarchy = (
   cardinalityScores: CardinalityScore[],
   headers: string[],
-  productDomain: ProductDomain
-): { hierarchy: HierarchyLevel[]; properties: string[]; confidence: number } => {
-  // Sort by cardinality (low to high)
-  const sortedScores = [...cardinalityScores].sort(
-    (a, b) => a.cardinality - b.cardinality
-  );
+  productDomain: ProductDomain,
+  data: any[][]
+): { hierarchy: HierarchyLevel[]; properties: string[]; confidence: number; propertiesWithoutValues: string[] } => {
+  // CRITICAL: Exclude measurement and unit fields from hierarchy detection
+  const EXCLUDE_FROM_HIERARCHY = [
+    'uom', 'unit', 'measure', 'measurement', 'dimension',
+    'weight', 'height', 'width', 'depth', 'length', 'size',
+    'zuc', 'zun', 'numerator', 'denominator',
+    'date', 'time', 'created', 'modified', 'valid', 'expiry'
+  ];
+
+  // Filter out measurement fields
+  const validScores = cardinalityScores.filter(score => {
+    const headerLower = score.header.toLowerCase();
+    return !EXCLUDE_FROM_HIERARCHY.some(kw => headerLower.includes(kw));
+  });
+
+  const validHeaders = validScores.map(s => s.header);
 
   const hierarchy: HierarchyLevel[] = [];
   const properties: string[] = [];
+
+  // Sort by cardinality (low to high)
+  const sortedScores = [...validScores].sort(
+    (a, b) => a.cardinality - b.cardinality
+  );
 
   // Classify headers by cardinality
   const lowCardinalityHeaders = sortedScores
@@ -266,106 +314,285 @@ const determineHierarchy = (
     }
   }
   
-  // Build hierarchy intelligently based on available data
-  // IMPORTANT: Properties are NOT required for hierarchy - all fields can be hierarchical
+  // Build hierarchy based on cardinality distribution
+  // High Repetition (Low Cardinality) = Parent Levels
+  // Medium Repetition = Middle/Variant Levels  
+  // High Uniqueness (High Cardinality) = SKU-Level Properties
+  
+  // Helper: Check if field has good data representation (not too many empty values)
+  const hasGoodRepresentation = (header: string): boolean => {
+    const headerIndex = headers.indexOf(header);
+    if (headerIndex === -1) return false;
+    
+    const nonEmptyCount = data.filter(row => {
+      const value = row[headerIndex];
+      return value !== null && value !== undefined && value !== '';
+    }).length;
+    
+    return nonEmptyCount / data.length >= 0.7; // At least 70% filled
+  };
+
+  // Helper: Check if field is unique (good for Record ID)
+  const isUnique = (header: string): boolean => {
+    const headerIndex = headers.indexOf(header);
+    if (headerIndex === -1) return false;
+    
+    const values = data.map(row => row[headerIndex]).filter(v => v !== null && v !== undefined && v !== '');
+    const uniqueValues = new Set(values);
+    
+    return uniqueValues.size / values.length >= 0.95; // At least 95% unique
+  };
+
+  // Helper: Find Record ID with priority order and validation
+  const findBestRecordId = (headers: string[], isLowestLevel: boolean = false): string => {
+    if (isLowestLevel) {
+      // SKU-Level: Priority order - SKU > ZUN > GTIN > EAN > ZUC
+      const priorityKeywords = [
+        ['sku', 'sku_id', 'product_sku'],
+        ['zun', 'zun_id'],
+        ['gtin', 'gtin_id'],
+        ['ean', 'ean_id', 'barcode'],
+        ['zuc', 'zuc_id'],
+        ['upc', 'article', 'product_id', 'item_id']
+      ];
+      
+      for (const keywords of priorityKeywords) {
+        const candidate = headers.find(h => {
+          const lower = h.toLowerCase();
+          return keywords.some(kw => lower.includes(kw)) && 
+                 hasGoodRepresentation(h) && 
+                 isUnique(h);
+        });
+        
+        if (candidate) return candidate;
+      }
+    }
+    
+    // CRITICAL: For ALL levels - Try with full validation first
+    let candidate = headers.find(h => 
+      isLikelyRecordId(h) && 
+      hasGoodRepresentation(h) && 
+      isUnique(h)
+    );
+    
+    if (candidate) return candidate;
+    
+    // FALLBACK 1: Relax uniqueness requirement (only 70% filled)
+    candidate = headers.find(h => 
+      isLikelyRecordId(h) && 
+      hasGoodRepresentation(h)
+    );
+    
+    if (candidate) return candidate;
+    
+    // FALLBACK 2: Just find any ID-like field
+    candidate = headers.find(h => isLikelyRecordId(h));
+    
+    if (candidate) return candidate;
+    
+    // FALLBACK 3: MANDATORY - Use first header as Record ID
+    // Every level MUST have a Record ID!
+    return headers[0];
+  };
+
+  // Helper: Find Record ID and Name for a set of headers
+  const findRecordIdAndName = (headers: string[], isLowestLevel: boolean = false) => {
+    const recordId = findBestRecordId(headers, isLowestLevel);
+    const recordName = headers.find(h => isLikelyRecordName(h) && hasGoodRepresentation(h));
+    return { recordId, recordName };
+  };
+
   if (totalLowMedium === 0) {
     // No repetitive data - STANDALONE MODEL (all products are independent)
+    const { recordId, recordName } = findRecordIdAndName(validHeaders, true);
     hierarchy.push({
       level: 1,
-      name: 'Standalone Model - Independent Products',
-      headers: [],
+      name: 'SKU-Level Properties',
+      headers: validHeaders, // All fields are SKU-level
+      recordId,
+      recordName,
     });
-    // All headers become properties in standalone model
-    properties.push(...headers);
-    confidence = 0.8; // High confidence for standalone detection
+    confidence = 0.8;
   } else if (totalLowMedium === 1) {
-    // Only 1 repetitive field - FLAT MODEL (1 level hierarchy)
-    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    // 1 repetitive field - SINGLE LEVEL HIERARCHY
+    const levelHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    const { recordId, recordName } = findRecordIdAndName(levelHeaders);
     hierarchy.push({
       level: 1,
-      name: 'Single Level (Flat Model)',
-      headers: combinedHeaders.slice(0, 1),
+      name: 'Parent Level (Taxonomy)',
+      headers: levelHeaders,
+      recordId,
+      recordName,
     });
-    // Remaining fields are properties
-    properties.push(...combinedHeaders.slice(1), ...highCardinalityHeaders);
     confidence = 0.75;
   } else if (totalLowMedium === 2) {
-    // 2 repetitive fields - TWO LEVEL HIERARCHY (Parent → Variant)
-    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    // 2 repetitive fields - TWO LEVEL HIERARCHY
+    const level1Headers = lowCardinalityHeaders;
+    const level2Headers = [...mediumCardinalityHeaders, ...highCardinalityHeaders];
+    
     hierarchy.push({
       level: 1,
-      name: 'Parent Level',
-      headers: [combinedHeaders[0]],
+      name: 'Parent Level (Taxonomy)',
+      headers: level1Headers,
+      ...findRecordIdAndName(level1Headers),
     });
     hierarchy.push({
       level: 2,
-      name: 'Variant Level',
-      headers: [combinedHeaders[1]],
+      name: 'SKU-Level Properties',
+      headers: level2Headers,
+      ...findRecordIdAndName(level2Headers, true),
     });
-    properties.push(...highCardinalityHeaders);
     confidence = 0.85;
   } else if (totalLowMedium === 3) {
-    // 3 repetitive fields - THREE LEVEL HIERARCHY (Parent → Child → Grandchild)
-    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    // 3 repetitive fields - THREE LEVEL HIERARCHY
+    const level1Headers = lowCardinalityHeaders;
+    const level2Headers = mediumCardinalityHeaders.slice(0, Math.ceil(mediumCardinalityHeaders.length / 2));
+    const level3Headers = [...mediumCardinalityHeaders.slice(Math.ceil(mediumCardinalityHeaders.length / 2)), ...highCardinalityHeaders];
+    
     hierarchy.push({
       level: 1,
-      name: 'Parent Level',
-      headers: [combinedHeaders[0]],
+      name: 'Parent Level (Taxonomy)',
+      headers: level1Headers,
+      ...findRecordIdAndName(level1Headers),
     });
     hierarchy.push({
       level: 2,
       name: 'Child Level',
-      headers: [combinedHeaders[1]],
+      headers: level2Headers,
+      ...findRecordIdAndName(level2Headers),
     });
     hierarchy.push({
       level: 3,
-      name: 'Grandchild Level',
-      headers: [combinedHeaders[2]],
+      name: 'SKU-Level Properties',
+      headers: level3Headers,
+      ...findRecordIdAndName(level3Headers, true),
     });
-    properties.push(...highCardinalityHeaders);
     confidence = 0.9;
   } else {
-    // 4+ repetitive fields - FOUR LEVEL HIERARCHY (max 4 levels)
-    const combinedHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
+    // 4+ repetitive fields - MULTI-LEVEL HIERARCHY
+    const numLevels = Math.min(4, Math.ceil(totalLowMedium / 2) + 1);
     
-    // Level 1: Most repetitive (lowest cardinality)
+    // Level 1: High Repetition (Parent/Taxonomy)
     hierarchy.push({
       level: 1,
-      name: 'Parent Level',
-      headers: combinedHeaders.slice(0, 1),
+      name: 'Parent Level (Taxonomy)',
+      headers: lowCardinalityHeaders,
+      ...findRecordIdAndName(lowCardinalityHeaders),
     });
     
-    // Level 2: Second most repetitive
+    // Middle levels: Medium Repetition
+    const mediumPerLevel = Math.ceil(mediumCardinalityHeaders.length / (numLevels - 2));
+    for (let i = 0; i < numLevels - 2; i++) {
+      const start = i * mediumPerLevel;
+      const end = Math.min((i + 1) * mediumPerLevel, mediumCardinalityHeaders.length);
+      if (start < mediumCardinalityHeaders.length) {
+        const levelHeaders = mediumCardinalityHeaders.slice(start, end);
+        hierarchy.push({
+          level: i + 2,
+          name: `Level ${i + 2}`,
+          headers: levelHeaders,
+          ...findRecordIdAndName(levelHeaders),
+        });
+      }
+    }
+    
+    // Last level: SKU-Level Properties (High Uniqueness)
+    const lastMediumIndex = (numLevels - 2) * mediumPerLevel;
+    const skuLevelHeaders = [...mediumCardinalityHeaders.slice(lastMediumIndex), ...highCardinalityHeaders];
     hierarchy.push({
-      level: 2,
-      name: 'Child Level',
-      headers: combinedHeaders.slice(1, 2),
+      level: numLevels,
+      name: 'SKU-Level Properties',
+      headers: skuLevelHeaders,
+      ...findRecordIdAndName(skuLevelHeaders, true),
     });
     
-    // Level 3: Third most repetitive
-    if (combinedHeaders.length > 2) {
-      hierarchy.push({
-        level: 3,
-        name: 'Grandchild Level',
-        headers: combinedHeaders.slice(2, 3),
-      });
-    }
-    
-    // Level 4: Fourth most repetitive (if available)
-    if (combinedHeaders.length > 3) {
-      hierarchy.push({
-        level: 4,
-        name: 'Great-grandchild Level',
-        headers: combinedHeaders.slice(3, 4),
-      });
-    }
-    
-    // Remaining fields become properties
-    properties.push(...combinedHeaders.slice(4), ...highCardinalityHeaders);
     confidence = 0.85;
   }
 
-  return { hierarchy, properties, confidence };
+  // Helper: Check if property has values in data
+  const hasValues = (header: string, data: any[][]): boolean => {
+    const headerIndex = headers.indexOf(header);
+    if (headerIndex === -1) return false;
+    
+    // Check if at least 10% of rows have non-empty values
+    const nonEmptyCount = data.filter(row => {
+      const value = row[headerIndex];
+      return value !== null && value !== undefined && value !== '';
+    }).length;
+    
+    return nonEmptyCount / data.length >= 0.1; // At least 10% filled
+  };
+
+  // CRITICAL: Consolidate levels with < 5 properties into lower level
+  // This ensures well-defined hierarchies
+  const MIN_PROPERTIES_PER_LEVEL = 5;
+  const consolidatedHierarchy: typeof hierarchy = [];
+  
+  for (let i = 0; i < hierarchy.length; i++) {
+    const level = hierarchy[i];
+    
+    // If this is the last level, always keep it (SKU-Level)
+    if (i === hierarchy.length - 1) {
+      consolidatedHierarchy.push(level);
+      continue;
+    }
+    
+    // If level has < 5 properties, merge with next level
+    if (level.headers.length < MIN_PROPERTIES_PER_LEVEL && i < hierarchy.length - 1) {
+      const nextLevel = hierarchy[i + 1];
+      nextLevel.headers = [...level.headers, ...nextLevel.headers];
+      nextLevel.level = level.level; // Keep current level number
+      nextLevel.name = level.name; // Keep current level name
+      // Skip this level, it's merged
+      continue;
+    }
+    
+    consolidatedHierarchy.push(level);
+  }
+  
+  // Renumber levels after consolidation
+  consolidatedHierarchy.forEach((level, index) => {
+    level.level = index + 1;
+    // Update name for last level
+    if (index === consolidatedHierarchy.length - 1) {
+      level.name = 'SKU-Level Properties';
+    }
+  });
+
+  // Separate properties with and without values
+  const propertiesWithoutValues: string[] = [];
+  const allHeaders = consolidatedHierarchy.flatMap(level => level.headers);
+  
+  // Check each property in the last level for values
+  if (consolidatedHierarchy.length > 0) {
+    const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
+    const headersWithValues: string[] = [];
+    
+    lastLevel.headers.forEach(header => {
+      if (hasValues(header, data)) {
+        headersWithValues.push(header);
+      } else {
+        propertiesWithoutValues.push(header);
+      }
+    });
+    
+    lastLevel.headers = headersWithValues;
+  }
+
+  // Add excluded measurement fields to SKU-level (last level)
+  const excludedFields = headers.filter(h => !validHeaders.includes(h));
+  if (consolidatedHierarchy.length > 0) {
+    const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
+    excludedFields.forEach(field => {
+      if (hasValues(field, data)) {
+        lastLevel.headers.push(field);
+      } else {
+        propertiesWithoutValues.push(field);
+      }
+    });
+  }
+
+  return { hierarchy: consolidatedHierarchy, properties, confidence, propertiesWithoutValues };
 };
 
 const generateAlternativeHierarchies = (
@@ -384,7 +611,7 @@ const generateAlternativeHierarchies = (
   // Alternative 1: Standalone Model (no hierarchy)
   alternatives.push({
     name: 'Standalone Model',
-    hierarchy: [{ level: 1, name: 'Independent Products', headers: [] }],
+    hierarchy: [{ level: 1, name: 'Independent Products', headers: [], recordId: headers[0] || 'id' }],
     properties: headers,
     confidence: 0.6,
     reasoning: 'All products are independent, no hierarchical structure',
@@ -394,7 +621,7 @@ const generateAlternativeHierarchies = (
   // Alternative 2: Flat model with primary grouping (if we have 1+ repetitive fields)
   if (combinedHeaders.length >= 1) {
     const hierarchy: HierarchyLevel[] = [
-      { level: 1, name: 'Single Category', headers: combinedHeaders.slice(0, 1) },
+      { level: 1, name: 'Single Category', headers: combinedHeaders.slice(0, 1), recordId: combinedHeaders[0] },
     ];
     const properties = [...combinedHeaders.slice(1), ...highHeaders];
     
@@ -411,8 +638,8 @@ const generateAlternativeHierarchies = (
   // Alternative 3: Two-level hierarchy (if we have 2+ repetitive fields)
   if (combinedHeaders.length >= 2) {
     const hierarchy: HierarchyLevel[] = [
-      { level: 1, name: 'Main Category', headers: combinedHeaders.slice(0, 1) },
-      { level: 2, name: 'Subcategory', headers: combinedHeaders.slice(1, 2) },
+      { level: 1, name: 'Main Category', headers: combinedHeaders.slice(0, 1), recordId: combinedHeaders[0] },
+      { level: 2, name: 'Subcategory', headers: combinedHeaders.slice(1, 2), recordId: combinedHeaders[1] },
     ];
     const properties = [...combinedHeaders.slice(2), ...highHeaders];
     
@@ -429,9 +656,9 @@ const generateAlternativeHierarchies = (
   // Alternative 4: Three-level hierarchy (if we have 3+ fields)
   if (combinedHeaders.length >= 3) {
     const hierarchy: HierarchyLevel[] = [
-      { level: 1, name: 'Main Category', headers: [combinedHeaders[0]] },
-      { level: 2, name: 'Subcategory', headers: [combinedHeaders[1]] },
-      { level: 3, name: 'Detailed Category', headers: [combinedHeaders[2]] },
+      { level: 1, name: 'Main Category', headers: [combinedHeaders[0]], recordId: combinedHeaders[0] },
+      { level: 2, name: 'Subcategory', headers: [combinedHeaders[1]], recordId: combinedHeaders[1] },
+      { level: 3, name: 'Detailed Category', headers: [combinedHeaders[2]], recordId: combinedHeaders[2] },
     ];
     const properties = [...combinedHeaders.slice(3), ...highHeaders];
     
@@ -448,10 +675,10 @@ const generateAlternativeHierarchies = (
   // Alternative 5: Four-level hierarchy (if we have 4+ fields)
   if (combinedHeaders.length >= 4) {
     const hierarchy: HierarchyLevel[] = [
-      { level: 1, name: 'Main Category', headers: [combinedHeaders[0]] },
-      { level: 2, name: 'Subcategory', headers: [combinedHeaders[1]] },
-      { level: 3, name: 'Detailed Category', headers: [combinedHeaders[2]] },
-      { level: 4, name: 'Specification', headers: [combinedHeaders[3]] },
+      { level: 1, name: 'Main Category', headers: [combinedHeaders[0]], recordId: combinedHeaders[0] },
+      { level: 2, name: 'Subcategory', headers: [combinedHeaders[1]], recordId: combinedHeaders[1] },
+      { level: 3, name: 'Detailed Category', headers: [combinedHeaders[2]], recordId: combinedHeaders[2] },
+      { level: 4, name: 'Specification', headers: [combinedHeaders[3]], recordId: combinedHeaders[3] },
     ];
     const properties = [...combinedHeaders.slice(4), ...highHeaders];
     

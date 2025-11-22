@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 export interface CardinalityScore {
   header: string;
@@ -16,6 +18,7 @@ interface CardinalityAnalysisProps {
 }
 
 export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
+  const [isExpanded, setIsExpanded] = useState(false);
   const getClassificationColor = (classification: string) => {
     switch (classification) {
       case 'high':
@@ -50,13 +53,22 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
     >
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-semibold mb-2">Data Pattern Analysis</h2>
-            <p className="text-muted-foreground">
-              Analyzing repetition and uniqueness patterns in product attributes
-            </p>
+          <div 
+            className="flex items-center justify-between cursor-pointer"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            <div>
+              <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
+                {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+                Data Pattern Analysis
+              </h2>
+              <p className="text-muted-foreground">
+                Analyzing repetition and uniqueness patterns in product attributes
+              </p>
+            </div>
           </div>
 
+          {isExpanded && (
           <div className="space-y-4">
             {scores.map((score, index) => (
               <motion.div
@@ -88,6 +100,7 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
               </motion.div>
             ))}
           </div>
+          )}
         </div>
       </Card>
     </motion.div>

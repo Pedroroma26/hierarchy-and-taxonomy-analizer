@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
-import { Button } from './ui/button';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText } from 'lucide-react';
 import { TaxonomyTreeNode } from '@/utils/exportReport';
 
@@ -80,7 +79,7 @@ const TreeNode = ({ node, depth }: TreeNodeProps) => {
       </motion.div>
 
       {/* Children */}
-      {isExpanded && hasChildren && (
+      {hasChildren && isExpanded && (
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
@@ -97,7 +96,7 @@ const TreeNode = ({ node, depth }: TreeNodeProps) => {
 };
 
 export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationProps) => {
-  const [expandAll, setExpandAll] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
 
   const countTotalNodes = (node: TaxonomyTreeNode): number => {
     return 1 + node.children.reduce((sum, child) => sum + countTotalNodes(child), 0);
@@ -127,23 +126,22 @@ export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationPro
         <div className="space-y-6">
           {/* Header */}
           <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-2xl font-semibold mb-2">Taxonomy Tree</h2>
+            <div 
+              className="flex-1 cursor-pointer"
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
+                {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+                Taxonomy Tree
+              </h2>
               <p className="text-muted-foreground">
                 Complete product hierarchy visualization
               </p>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setExpandAll(!expandAll)}
-              >
-                {expandAll ? 'Collapse All' : 'Expand All'}
-              </Button>
-            </div>
           </div>
 
+          {isExpanded && (
+          <>
           {/* Statistics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-4 rounded-lg bg-muted/50">
@@ -186,6 +184,8 @@ export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationPro
               <span>Leaf category</span>
             </div>
           </div>
+          </>
+          )}
         </div>
       </Card>
     </motion.div>

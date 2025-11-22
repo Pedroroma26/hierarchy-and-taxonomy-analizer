@@ -5,21 +5,12 @@ import { FileUpload } from '@/components/FileUpload';
 import { DataPreview } from '@/components/DataPreview';
 import { CardinalityAnalysis } from '@/components/CardinalityAnalysis';
 import { HierarchyProposal } from '@/components/HierarchyProposal';
-import { TaxonomyResults } from '@/components/TaxonomyResults';
 import { PropertyRecommendations } from '@/components/PropertyRecommendations';
-import { ThresholdAdjuster } from '@/components/ThresholdAdjuster';
-import { AlternativeHierarchies } from '@/components/AlternativeHierarchies';
-import { ProductDomainIndicator } from '@/components/ProductDomainIndicator';
-import { OrphanedRecordsAlert } from '@/components/OrphanedRecordsAlert';
-import { InteractiveHierarchyBuilder } from '@/components/InteractiveHierarchyBuilder';
 import { HeaderSelector } from '@/components/HeaderSelector';
 import { TaxonomyTreeVisualization } from '@/components/TaxonomyTreeVisualization';
 import { DataValidationWarnings } from '@/components/DataValidationWarnings';
-import { UomFilterConfig } from '@/components/UomFilterConfig';
-import { PropertyHierarchyMapping } from '@/components/PropertyHierarchyMapping';
 import { BestPracticesRecommendations } from '@/components/BestPracticesRecommendations';
-import { analyzeProductData, AnalysisResult, HierarchyAlternative } from '@/utils/analysisEngine';
-import { HierarchyLevel } from '@/components/HierarchyProposal';
+import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
 import { generateExportReport, buildTaxonomyTree } from '@/utils/exportReport';
 import { validateData } from '@/utils/dataValidation';
 import { generatePDFReport } from '@/utils/pdfExport';
@@ -43,10 +34,8 @@ const Index = () => {
   const [data, setData] = useState<any[][]>([]);
   const [showHeaderSelection, setShowHeaderSelection] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [customThresholds, setCustomThresholds] = useState<{ low: number; medium: number } | null>(null);
   const [taxonomyTree, setTaxonomyTree] = useState<any>(null);
   const [validationResult, setValidationResult] = useState<any>(null);
-  const [excludedUomFields, setExcludedUomFields] = useState<string[]>([]);
   const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
@@ -66,7 +55,9 @@ const Index = () => {
         return;
       }
 
-      const extractedHeaders = jsonData[0] as string[];
+      const extractedHeaders = (jsonData[0] as string[]).map(h => 
+        h ? h.toString().trim() : ''
+      );
       const extractedData = jsonData.slice(1);
 
       // Store all headers and data, show header selection
@@ -102,11 +93,11 @@ const Index = () => {
     setData(filteredData);
 
     // Perform analysis with selected headers
-    const result = analyzeProductData(selected, filteredData, customThresholds || undefined);
+    const result = analyzeProductData(selected, filteredData);
     setAnalysisResult(result);
 
-    // Build taxonomy tree with excluded UOM fields
-    const tree = buildTaxonomyTree(result.hierarchy, filteredData, selected, excludedUomFields);
+    // Build taxonomy tree
+    const tree = buildTaxonomyTree(result.hierarchy, filteredData, selected);
     setTaxonomyTree(tree);
 
     // Validate data quality
@@ -148,7 +139,7 @@ const Index = () => {
     if (!analysisResult || !taxonomyTree) return;
 
     try {
-      generatePDFReport(analysisResult, headers, data, taxonomyTree);
+      generatePDFReport(analysisResult, headers, data, taxonomyTree, validationResult);
       
       toast({
         title: 'PDF Export Successful',
@@ -162,71 +153,6 @@ const Index = () => {
         variant: 'destructive',
       });
     }
-  };
-
-  const handleThresholdChange = (low: number, medium: number) => {
-    setCustomThresholds({ low, medium });
-  };
-
-  const handleReanalyze = () => {
-    if (headers.length > 0 && data.length > 0) {
-      const result = analyzeProductData(headers, data, customThresholds || undefined);
-      setAnalysisResult(result);
-      toast({
-        title: 'Reanalysis Complete',
-        description: 'Data has been reanalyzed with new thresholds.',
-      });
-    }
-  };
-
-  const handleSelectAlternative = (alternative: HierarchyAlternative) => {
-    if (!analysisResult) return;
-    
-    const newResult: AnalysisResult = {
-      ...analysisResult,
-      hierarchy: alternative.hierarchy,
-      properties: alternative.properties,
-      hierarchyConfidence: alternative.confidence,
-    };
-    setAnalysisResult(newResult);
-    
-    toast({
-      title: 'Hierarchy Updated',
-      description: `Applied "${alternative.name}" structure.`,
-    });
-  };
-
-  const handlePreviewCustomHierarchy = (hierarchy: HierarchyLevel[]) => {
-    if (!analysisResult) return;
-    
-    // Recalculate properties
-    const hierarchyHeaders = hierarchy.flatMap(h => h.headers);
-    const properties = headers.filter(h => !hierarchyHeaders.includes(h));
-    
-    toast({
-      title: 'Preview Mode',
-      description: `Previewing ${hierarchy.length}-level hierarchy with ${properties.length} properties.`,
-    });
-  };
-
-  const handleApplyCustomHierarchy = (hierarchy: HierarchyLevel[]) => {
-    if (!analysisResult) return;
-    
-    const hierarchyHeaders = hierarchy.flatMap(h => h.headers);
-    const properties = headers.filter(h => !hierarchyHeaders.includes(h));
-    
-    const newResult: AnalysisResult = {
-      ...analysisResult,
-      hierarchy,
-      properties,
-      hierarchyConfidence: 0.8, // Custom hierarchies get fixed confidence
-    };
-    setAnalysisResult(newResult);
-    
-    toast({
-      title: 'Custom Hierarchy Applied',
-      description: 'Your custom hierarchy structure is now active.',
-    });
   };
 
   return (
@@ -273,17 +199,11 @@ const Index = () => {
           <FileUpload onFileUpload={handleFileUpload} />
 
           {showHeaderSelection && allHeaders.length > 0 && (
-            <>
-              <HeaderSelector 
-                headers={allHeaders} 
-                onConfirm={handleHeaderSelection}
-              />
-              
-              <UomFilterConfig
-                headers={allHeaders}
-                onConfigChange={setExcludedUomFields}
-              />
-            </>
+            <HeaderSelector 
+              headers={allHeaders}
+              data={data}
+              onConfirm={handleHeaderSelection}
+            />
           )}
 
           {!showHeaderSelection && data.length > 0 && (
@@ -292,65 +212,36 @@ const Index = () => {
 
               {analysisResult && (
                 <>
-                  <ProductDomainIndicator domain={analysisResult.productDomain} />
-                  
-                  {/* CORE: Property-to-Hierarchy Mapping */}
-                  <PropertyHierarchyMapping analysisResult={analysisResult} />
-                  
-                  {/* CORE: Best Practices & Recommendations */}
-                  <BestPracticesRecommendations analysisResult={analysisResult} />
-                  
-                  {validationResult && (
-                    <DataValidationWarnings validation={validationResult} />
-                  )}
-                  
+                  {/* Data Pattern Analysis - CORE for hierarchy decisions */}
                   <CardinalityAnalysis scores={analysisResult.cardinalityScores} />
                   
-                  <ThresholdAdjuster
-                    currentThresholds={analysisResult.thresholds}
-                    onThresholdChange={handleThresholdChange}
-                    onApply={handleReanalyze}
-                  />
-                  
-                  <PropertyRecommendations
-                    recordIdSuggestion={analysisResult.recordIdSuggestion}
-                    recordNameSuggestion={analysisResult.recordNameSuggestion}
-                    propertyRecommendations={analysisResult.propertyRecommendations}
-                    uomSuggestions={analysisResult.uomSuggestions}
-                  />
-                  
-                  {analysisResult.alternativeHierarchies.length > 0 && (
-                    <AlternativeHierarchies
-                      alternatives={analysisResult.alternativeHierarchies}
-                      currentConfidence={analysisResult.hierarchyConfidence}
-                      onSelect={handleSelectAlternative}
-                    />
-                  )}
-                  
+                  {/* Main Hierarchy Proposal */}
                   <HierarchyProposal
                     hierarchy={analysisResult.hierarchy}
                     properties={analysisResult.properties}
+                    propertiesWithoutValues={analysisResult.propertiesWithoutValues}
                   />
                   
-                  <InteractiveHierarchyBuilder
-                    availableHeaders={headers}
-                    initialHierarchy={analysisResult.hierarchy}
-                    onPreview={handlePreviewCustomHierarchy}
-                    onApply={handleApplyCustomHierarchy}
-                  />
-                  
-                  {analysisResult.orphanedRecords.length > 0 && (
-                    <OrphanedRecordsAlert orphanedRecords={analysisResult.orphanedRecords} />
-                  )}
-                  
+                  {/* Taxonomy Tree - RIGHT AFTER Hierarchy Proposal */}
                   {taxonomyTree && (
                     <TaxonomyTreeVisualization tree={taxonomyTree} />
                   )}
                   
-                  <TaxonomyResults
-                    taxonomyPaths={analysisResult.taxonomyPaths}
-                    onExport={handleExportJSON}
+                  {/* Property Type Recommendations - BEFORE Best Practices */}
+                  <PropertyRecommendations
+                    recordIdSuggestion={analysisResult.recordIdSuggestion}
+                    recordNameSuggestion={analysisResult.recordNameSuggestion}
+                    propertyRecommendations={analysisResult.propertyRecommendations}
+                    uomSuggestions={[]}
                   />
+                  
+                  {/* CORE: Best Practices & Recommendations */}
+                  <BestPracticesRecommendations analysisResult={analysisResult} />
+                  
+                  {/* Data Quality Warnings - LAST */}
+                  {validationResult && (
+                    <DataValidationWarnings validation={validationResult} />
+                  )}
                 </>
               )}
             </>

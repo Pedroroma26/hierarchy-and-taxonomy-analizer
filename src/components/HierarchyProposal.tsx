@@ -1,20 +1,26 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronRight, Database, Layers, Tag } from 'lucide-react';
+import { ChevronRight, ChevronDown, Database, Layers, Tag } from 'lucide-react';
 
 export interface HierarchyLevel {
   level: number;
   name: string;
   headers: string[];
+  recordId: string; // MANDATORY - Record ID field for this level
+  recordName?: string; // Suggested Record Name field for this level
 }
 
 interface HierarchyProposalProps {
   hierarchy: HierarchyLevel[];
   properties: string[];
+  propertiesWithoutValues?: string[];
 }
 
-export const HierarchyProposal = ({ hierarchy, properties }: HierarchyProposalProps) => {
+export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValues = [] }: HierarchyProposalProps) => {
+  const [isExpanded, setIsExpanded] = useState(true);
+
   const getLevelIcon = (level: number) => {
     switch (level) {
       case 1:
@@ -45,14 +51,22 @@ export const HierarchyProposal = ({ hierarchy, properties }: HierarchyProposalPr
     >
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-semibold mb-2">Proposed Product Hierarchy</h2>
+          <div 
+            className="cursor-pointer"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
+              {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+              Proposed Product Hierarchy
+            </h2>
             <p className="text-muted-foreground">
               Data inheritance structure based on cardinality analysis
             </p>
           </div>
 
-          <div className="space-y-4">
+          {isExpanded && (
+          <>
+            <div className="space-y-4">
             {hierarchy.map((level, index) => (
               <motion.div
                 key={level.level}
@@ -75,6 +89,23 @@ export const HierarchyProposal = ({ hierarchy, properties }: HierarchyProposalPr
                       </h3>
                     </div>
                     
+                    {/* Record ID and Name - MANDATORY for all levels */}
+                    <div className="mb-3 p-3 bg-background/30 rounded-md border border-background/40">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">Required for this level:</div>
+                      <div className="flex gap-4 text-sm">
+                        <div>
+                          <span className="font-medium">Record ID:</span>{' '}
+                          <Badge variant="secondary" className="ml-1">{level.recordId}</Badge>
+                        </div>
+                        {level.recordName && (
+                          <div>
+                            <span className="font-medium">Record Name:</span>{' '}
+                            <Badge variant="secondary" className="ml-1">{level.recordName}</Badge>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
                     <div className="flex flex-wrap gap-2">
                       {level.headers.map((header) => (
                         <Badge 
@@ -90,27 +121,35 @@ export const HierarchyProposal = ({ hierarchy, properties }: HierarchyProposalPr
                 </div>
               </motion.div>
             ))}
-          </div>
+            </div>
 
-          {properties.length > 0 && (
+            {/* Properties Without Values - Uncertain Hierarchy Level */}
+            {propertiesWithoutValues.length > 0 && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-              className="mt-8 p-5 rounded-lg bg-muted"
+              transition={{ delay: 0.5 }}
+              className="mt-6 p-5 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800"
             >
-              <h3 className="font-semibold text-lg mb-3 flex items-center gap-2">
-                <Tag className="w-5 h-5" />
-                Product Properties (SKU-Level)
-              </h3>
+              <div className="flex items-center gap-2 mb-3">
+                <Tag className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
+                <h3 className="font-semibold text-lg text-yellow-800 dark:text-yellow-300">
+                  Properties Without Values
+                </h3>
+              </div>
+              <p className="text-sm text-yellow-700 dark:text-yellow-400 mb-3">
+                {propertiesWithoutValues.length} properties have no data. Uncertain which hierarchy level they belong to.
+              </p>
               <div className="flex flex-wrap gap-2">
-                {properties.map((prop) => (
-                  <Badge key={prop} variant="secondary">
+                {propertiesWithoutValues.map((prop) => (
+                  <Badge key={prop} variant="outline" className="bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
                     {prop}
                   </Badge>
                 ))}
               </div>
             </motion.div>
+            )}
+          </>
           )}
         </div>
       </Card>

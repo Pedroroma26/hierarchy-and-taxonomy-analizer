@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
@@ -8,7 +9,9 @@ import {
   AlertTriangle, 
   TrendingUp,
   Split,
-  Database
+  Database,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { AnalysisResult } from '@/utils/analysisEngine';
 import { ScrollArea } from './ui/scroll-area';
@@ -29,6 +32,7 @@ interface Recommendation {
 export const BestPracticesRecommendations = ({ 
   analysisResult 
 }: BestPracticesRecommendationsProps) => {
+  const [isExpanded, setIsExpanded] = useState(false);
   const recommendations: Recommendation[] = [];
 
   // 1. UOM Split Recommendations
@@ -205,8 +209,12 @@ export const BestPracticesRecommendations = ({
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
           {/* Header */}
-          <div>
+          <div 
+            className="cursor-pointer"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
             <div className="flex items-center gap-3 mb-2">
+              {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
               <Lightbulb className="w-6 h-6 text-primary" />
               <h2 className="text-2xl font-semibold">Best Practices & Recommendations</h2>
             </div>
@@ -214,6 +222,9 @@ export const BestPracticesRecommendations = ({
               Critical insights for Salsify implementation and client discussions
             </p>
           </div>
+
+          {isExpanded && (
+          <>
 
           {/* Summary Stats */}
           <div className="grid grid-cols-3 gap-4">
@@ -289,6 +300,8 @@ export const BestPracticesRecommendations = ({
               )}
             </div>
           </ScrollArea>
+          </>
+          )}
         </div>
       </Card>
     </motion.div>

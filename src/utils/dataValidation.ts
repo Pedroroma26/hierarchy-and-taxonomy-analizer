@@ -18,6 +18,19 @@ export interface ValidationResult {
 /**
  * Validate data quality - WARNINGS ONLY, NO MODIFICATIONS
  */
+// Fields that should be unique identifiers
+const ID_KEYWORDS = [
+  'sku', 'id', 'ean', 'upc', 'gtin', 'code', 'reference',
+  'case', 'pallet', 'zuc', 'zun', 'barcode', 'article'
+];
+
+// Fields to exclude from validation (measurements, dates, descriptions)
+const EXCLUDE_KEYWORDS = [
+  'unit', 'uom', 'measure', 'weight', 'height', 'width', 'depth', 'length', 'size',
+  'date', 'time', 'created', 'modified', 'updated', 'valid', 'expiry',
+  'description', 'desc', 'text', 'comment', 'note', 'material'
+];
+
 export const validateData = (
   headers: string[],
   data: any[][],
@@ -55,48 +68,48 @@ export const validateData = (
  */
 const detectDuplicates = (headers: string[], data: any[][]): DataValidationWarning[] => {
   const warnings: DataValidationWarning[] = [];
-  
-  // Look for ID or SKU columns
-  const idColumns = headers
-    .map((h, idx) => ({ header: h, index: idx }))
-    .filter(({ header }) => {
-      const lower = header.toLowerCase();
-      return lower.includes('id') || lower.includes('sku') || lower.includes('code');
-    });
 
-  if (idColumns.length === 0) return warnings;
+  headers.forEach((header, colIndex) => {
+    const headerLower = header.toLowerCase();
+    
+    // Only check ID fields
+    const isIDField = ID_KEYWORDS.some(kw => headerLower.includes(kw));
+    
+    // Skip excluded fields
+    const isExcluded = EXCLUDE_KEYWORDS.some(kw => headerLower.includes(kw));
+    
+    if (!isIDField || isExcluded) {
+      return; // Skip this field
+    }
 
-  idColumns.forEach(({ header, index }) => {
     const valueMap = new Map<string, number[]>();
     
     data.forEach((row, rowIndex) => {
-      const value = String(row[index] || '').trim();
-      if (value) {
-        if (!valueMap.has(value)) {
-          valueMap.set(value, []);
+      const value = row[colIndex];
+      if (value !== null && value !== undefined && value !== '') {
+        const valueStr = String(value).trim();
+        if (!valueMap.has(valueStr)) {
+          valueMap.set(valueStr, []);
         }
-        valueMap.get(value)!.push(rowIndex);
+        valueMap.get(valueStr)!.push(rowIndex + 2); // +2 for Excel row number (header + 0-index)
       }
     });
 
     // Find duplicates
-    const duplicates = Array.from(valueMap.entries()).filter(([_, rows]) => rows.length > 1);
+    const duplicates = Array.from(valueMap.entries()).filter(([_, indices]) => indices.length > 1);
     
     if (duplicates.length > 0) {
-      const totalDuplicateRows = duplicates.reduce((sum, [_, rows]) => sum + rows.length, 0);
-      const examples = duplicates.slice(0, 3).map(([value, rows]) => 
-        `"${value}" (${rows.length} occurrences)`
-      );
-
+      const affectedRows = duplicates.flatMap(([_, indices]) => indices);
+      const exampleRows = duplicates[0][1].slice(0, 3).join(', ');
       warnings.push({
         type: 'duplicate',
         severity: 'high',
         title: `Duplicate ${header} Values Detected`,
-        message: `Found ${duplicates.length} duplicate values in "${header}" affecting ${totalDuplicateRows} products`,
-        affectedRows: duplicates.flatMap(([_, rows]) => rows),
-        affectedCount: totalDuplicateRows,
+        message: `Found ${duplicates.length} duplicate values in "${header}" affecting ${affectedRows.length} products`,
+        affectedRows,
+        affectedCount: affectedRows.length,
         suggestion: `Review and ensure each product has a unique ${header}. Consider adding a suffix or correcting data entry errors.`,
-        examples,
+        examples: [`${exampleRows}`],
       });
     }
   });

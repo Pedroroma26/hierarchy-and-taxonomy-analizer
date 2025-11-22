@@ -8,7 +8,9 @@ import {
   Info, 
   Copy, 
   CheckCircle2,
-  XCircle 
+  XCircle,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { DataValidationWarning, ValidationResult } from '@/utils/dataValidation';
 import { Button } from './ui/button';
@@ -21,7 +23,9 @@ interface DataValidationWarningsProps {
 }
 
 export const DataValidationWarnings = ({ validation }: DataValidationWarningsProps) => {
+  const [isExpanded, setIsExpanded] = useState(false);
   const [expandedWarnings, setExpandedWarnings] = useState<Set<number>>(new Set([0]));
+  const [dismissedWarnings, setDismissedWarnings] = useState<Set<number>>(new Set());
 
   if (validation.warnings.length === 0) {
     return (
@@ -77,6 +81,15 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
     setExpandedWarnings(newExpanded);
   };
 
+  const dismissWarning = (index: number) => {
+    const newDismissed = new Set(dismissedWarnings);
+    newDismissed.add(index);
+    setDismissedWarnings(newDismissed);
+  };
+
+  // Filter out dismissed warnings
+  const activeWarnings = validation.warnings.filter((_, index) => !dismissedWarnings.has(index));
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -86,9 +99,15 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
           {/* Header */}
-          <div>
+          <div 
+            className="cursor-pointer"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-2xl font-semibold">Data Quality Warnings</h2>
+              <h2 className="text-2xl font-semibold flex items-center gap-2">
+                {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+                Data Quality Warnings
+              </h2>
               <div className="flex gap-2">
                 <Badge variant="destructive">
                   {validation.criticalIssues} Critical
@@ -103,6 +122,8 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
             </p>
           </div>
 
+          {isExpanded && (
+          <>
           {/* Summary Stats */}
           <div className="grid grid-cols-3 gap-4">
             <div className="p-4 rounded-lg bg-red-100 dark:bg-red-950/30">
@@ -128,7 +149,9 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
           {/* Warnings List */}
           <ScrollArea className="h-[500px]">
             <div className="space-y-3 pr-4">
-              {validation.warnings.map((warning, index) => (
+              {activeWarnings.map((warning, index) => {
+                const originalIndex = validation.warnings.indexOf(warning);
+                return (
                 <Collapsible
                   key={index}
                   open={expandedWarnings.has(index)}
@@ -181,15 +204,32 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
                         )}
 
                         {/* Affected Rows Info */}
-                        <div className="text-xs text-muted-foreground">
-                          Affected rows: {warning.affectedRows.slice(0, 10).join(', ')}
+                        <div className="text-xs text-muted-foreground font-mono">
+                          Excel rows: {warning.affectedRows.slice(0, 10).join(', ')}
                           {warning.affectedRows.length > 10 && ` ... and ${warning.affectedRows.length - 10} more`}
+                        </div>
+
+                        {/* Dismiss Button */}
+                        <div className="flex justify-end pt-2 border-t">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              dismissWarning(originalIndex);
+                            }}
+                            className="text-xs"
+                          >
+                            <XCircle className="w-3 h-3 mr-1" />
+                            Dismiss Warning
+                          </Button>
                         </div>
                       </div>
                     </CollapsibleContent>
                   </Card>
                 </Collapsible>
-              ))}
+                );
+              })}
             </div>
           </ScrollArea>
 
@@ -200,6 +240,8 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
               Use these insights during client calls to discuss data quality improvements.
             </p>
           </div>
+          </>
+          )}
         </div>
       </Card>
     </motion.div>
