@@ -15,11 +15,12 @@ import {
   ChevronDown,
   ChevronRight
 } from 'lucide-react';
-import { PropertyRecommendation, UomSuggestion } from '@/utils/analysisEngine';
+import { PropertyRecommendation, UomSuggestion, RecordIdNameSuggestion } from '@/utils/analysisEngine';
 
 interface PropertyRecommendationsProps {
   recordIdSuggestion: string | null;
   recordNameSuggestion: string | null;
+  recordIdNameSuggestions: RecordIdNameSuggestion[];
   propertyRecommendations: PropertyRecommendation[];
   uomSuggestions: UomSuggestion[];
 }
@@ -27,6 +28,7 @@ interface PropertyRecommendationsProps {
 export const PropertyRecommendations = ({
   recordIdSuggestion,
   recordNameSuggestion,
+  recordIdNameSuggestions,
   propertyRecommendations,
   uomSuggestions,
 }: PropertyRecommendationsProps) => {
@@ -85,10 +87,15 @@ export const PropertyRecommendations = ({
             className="cursor-pointer"
             onClick={() => setIsExpanded(!isExpanded)}
           >
-            <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
-              {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
-              Property Recommendations
-            </h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-2xl font-semibold flex items-center gap-2">
+                {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+                Property Recommendations
+              </h2>
+              <Badge variant="secondary" className="text-sm px-3 py-1 font-semibold">
+                {propertyRecommendations.length} properties
+              </Badge>
+            </div>
             <p className="text-muted-foreground">
               Data type suggestions and optimization opportunities
             </p>
@@ -96,35 +103,75 @@ export const PropertyRecommendations = ({
 
           {isExpanded && (
           <>
-          {/* Record ID and Name Suggestions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="p-4 bg-primary/5 border-primary/20">
-              <div className="flex items-center gap-2 mb-2">
-                <Hash className="w-5 h-5 text-primary" />
-                <h3 className="font-semibold">Record ID</h3>
-              </div>
-              {recordIdSuggestion ? (
-                <Badge variant="outline" className="bg-primary/10">
-                  {recordIdSuggestion}
-                </Badge>
-              ) : (
-                <p className="text-sm text-muted-foreground">No unique identifier detected</p>
-              )}
-            </Card>
-
-            <Card className="p-4 bg-accent/5 border-accent/20">
-              <div className="flex items-center gap-2 mb-2">
-                <FileText className="w-5 h-5 text-accent" />
-                <h3 className="font-semibold">Record Name</h3>
-              </div>
-              {recordNameSuggestion ? (
-                <Badge variant="outline" className="bg-accent/10">
-                  {recordNameSuggestion}
-                </Badge>
-              ) : (
-                <p className="text-sm text-muted-foreground">No name field detected</p>
-              )}
-            </Card>
+          {/* Record ID and Name Suggestions Per Level */}
+          <div>
+            <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
+              <Hash className="w-5 h-5" />
+              Record ID & Name Recommendations by Level
+            </h3>
+            <div className="space-y-3">
+              {recordIdNameSuggestions.map((suggestion, index) => (
+                <motion.div
+                  key={suggestion.level}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="p-4 rounded-lg border bg-card"
+                >
+                  <div className="mb-3">
+                    <h4 className="font-medium text-sm text-muted-foreground mb-1">
+                      Level {suggestion.level}: {suggestion.levelName}
+                    </h4>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Record ID */}
+                    <div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Hash className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-semibold">Record ID</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {suggestion.recordIdCandidates.map((candidate, idx) => (
+                          <Badge
+                            key={candidate}
+                            variant={candidate === suggestion.selectedRecordId ? "default" : "outline"}
+                            className={`text-xs ${candidate === suggestion.selectedRecordId ? 'bg-primary' : 'bg-primary/10'}`}
+                          >
+                            {idx === 0 && candidate === suggestion.selectedRecordId && '✓ '}
+                            {candidate}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {/* Record Name */}
+                    <div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <FileText className="w-4 h-4 text-accent" />
+                        <span className="text-sm font-semibold">Record Name</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {suggestion.recordNameCandidates.length > 0 ? (
+                          suggestion.recordNameCandidates.map((candidate, idx) => (
+                            <Badge
+                              key={candidate}
+                              variant={candidate === suggestion.selectedRecordName ? "default" : "outline"}
+                              className={`text-xs ${candidate === suggestion.selectedRecordName ? 'bg-accent' : 'bg-accent/10'}`}
+                            >
+                              {idx === 0 && candidate === suggestion.selectedRecordName && '✓ '}
+                              {candidate}
+                            </Badge>
+                          ))
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No name field detected</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
 
           {/* Data Type Recommendations */}

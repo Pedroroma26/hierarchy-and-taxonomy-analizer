@@ -20,27 +20,27 @@ export const DataPreview = ({ headers, data }: DataPreviewProps) => {
           <div>
             <h2 className="text-2xl font-semibold mb-2">Data Preview</h2>
             <p className="text-muted-foreground">
-              Showing first {Math.min(10, data.length)} rows of {data.length} total products
+              Showing {data.length} total products (scroll to view all)
             </p>
           </div>
           
-          <ScrollArea className="w-full rounded-lg border">
-            <div className="w-max min-w-full">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/50">
+          <div className="relative border rounded-lg">
+            <div className="overflow-auto max-h-[500px] w-full">
+              <Table className="relative">
+                <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10 shadow-sm">
+                  <TableRow>
                     {headers.map((header, index) => (
-                      <TableHead key={index} className="font-semibold whitespace-nowrap">
+                      <TableHead key={index} className="font-semibold whitespace-nowrap px-4 min-w-[150px] border-b-2">
                         {header}
                       </TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.slice(0, 10).map((row, rowIndex) => (
+                  {data.map((row, rowIndex) => (
                     <TableRow key={rowIndex} className="hover:bg-muted/30">
                       {row.map((cell, cellIndex) => (
-                        <TableCell key={cellIndex} className="whitespace-nowrap">
+                        <TableCell key={cellIndex} className="whitespace-nowrap px-4 min-w-[150px]">
                           {cell || '-'}
                         </TableCell>
                       ))}
@@ -49,7 +49,14 @@ export const DataPreview = ({ headers, data }: DataPreviewProps) => {
                 </TableBody>
               </Table>
             </div>
-          </ScrollArea>
+            <div className="bg-muted/30 px-4 py-2 text-xs text-muted-foreground border-t flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">💡 Tip:</span>
+                <span>Scroll horizontally and vertically to view all {data.length} rows</span>
+              </div>
+              <span className="font-mono">{data.length} products</span>
+            </div>
+          </div>
         </div>
       </Card>
     </motion.div>

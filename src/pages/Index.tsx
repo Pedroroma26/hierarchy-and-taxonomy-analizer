@@ -11,6 +11,7 @@ import { TaxonomyTreeVisualization } from '@/components/TaxonomyTreeVisualizatio
 import { DataValidationWarnings } from '@/components/DataValidationWarnings';
 import { BestPracticesRecommendations } from '@/components/BestPracticesRecommendations';
 import { ThresholdAdjuster } from '@/components/ThresholdAdjuster';
+import { SkuLevelForcing } from '@/components/SkuLevelForcing';
 import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
 import { generateExportReport, buildTaxonomyTree } from '@/utils/exportReport';
 import { validateData } from '@/utils/dataValidation';
@@ -37,6 +38,7 @@ const Index = () => {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [taxonomyTree, setTaxonomyTree] = useState<any>(null);
   const [validationResult, setValidationResult] = useState<any>(null);
+  const [forcedSkuHeaders, setForcedSkuHeaders] = useState<string[]>([]);
   const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
@@ -83,7 +85,7 @@ const Index = () => {
 
   const handleHeaderSelection = (selected: string[]) => {
     setSelectedHeaders(selected);
-    setHeaders(selected);
+    setHeaders(selected);  // Only selected headers
     setShowHeaderSelection(false);
 
     // Filter data to only include selected headers
@@ -92,14 +94,22 @@ const Index = () => {
       selectedIndices.map(idx => row[idx])
     );
     setData(filteredData);
-
-    // Perform analysis with selected headers
+    
+    // Perform analysis with ONLY selected headers
+    // Item-level detection will suggest which go to SKU-level
     runAnalysis(selected, filteredData);
   };
 
-  const runAnalysis = (headersToAnalyze: string[], dataToAnalyze: any[][], customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number }) => {
-    // Perform analysis with selected headers
-    const result = analyzeProductData(headersToAnalyze, dataToAnalyze, customThresholds);
+  const runAnalysis = (
+    headersToAnalyze: string[], 
+    dataToAnalyze: any[][], 
+    customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number; minPropertiesPerLevel?: number },
+    selectedHeaders?: string[],  // Optional: user-selected headers for preference
+    forcedHeaders?: string[]  // Optional: user-forced SKU-level headers
+  ) => {
+    // Perform analysis with ALL headers
+    // Pass forced headers to maintain user selections across threshold changes
+    const result = analyzeProductData(headersToAnalyze, dataToAnalyze, customThresholds, forcedHeaders);
     setAnalysisResult(result);
 
     // Build taxonomy tree
@@ -117,9 +127,26 @@ const Index = () => {
     });
   };
 
-  const handleThresholdsChange = (newThresholds: { parent: number; childrenMin: number; childrenMax: number; sku: number }) => {
+  const handleThresholdsChange = (newThresholds: { parent: number; childrenMin: number; childrenMax: number; sku: number; minPropertiesPerLevel: number }) => {
     if (headers.length > 0 && data.length > 0) {
-      runAnalysis(headers, data, newThresholds);
+      // CRITICAL: Pass forcedSkuHeaders to preserve user selections
+      runAnalysis(headers, data, newThresholds, undefined, forcedSkuHeaders);
+    }
+  };
+
+  const handleSkuLevelForcing = (forcedHeaders: string[]) => {
+    if (headers.length > 0 && data.length > 0) {
+      // Save forced headers
+      setForcedSkuHeaders(forcedHeaders);
+      
+      // Rerun analysis with forced SKU-level headers using runAnalysis for consistency
+      const customThresholds = analysisResult?.thresholds;
+      runAnalysis(headers, data, customThresholds, undefined, forcedHeaders);
+      
+      toast({
+        title: 'SKU-Level Forcing Applied',
+        description: `${forcedHeaders.length} properties forced to SKU-level. Analysis rerun complete.`,
+      });
     }
   };
 
@@ -224,13 +251,23 @@ const Index = () => {
 
               {analysisResult && (
                 <>
-                  {/* Data Pattern Analysis - CORE for hierarchy decisions */}
-                  <CardinalityAnalysis scores={analysisResult.cardinalityScores} />
-                  
-                  {/* Threshold Adjuster - Interactive tuning */}
+                  {/* Threshold Adjuster - Interactive tuning - MOVED HERE */}
                   <ThresholdAdjuster 
                     currentThresholds={analysisResult.thresholds}
                     onThresholdsChange={handleThresholdsChange}
+                  />
+                  
+                  {/* SKU-Level Forcing - Force properties to SKU-level */}
+                  <SkuLevelForcing
+                    headers={headers}
+                    currentHierarchy={analysisResult.hierarchy}
+                    onApply={handleSkuLevelForcing}
+                  />
+                  
+                  {/* Data Pattern Analysis - CORE for hierarchy decisions */}
+                  <CardinalityAnalysis 
+                    scores={analysisResult.cardinalityScores}
+                    thresholds={analysisResult.thresholds}
                   />
                   
                   {/* Main Hierarchy Proposal */}
@@ -249,6 +286,7 @@ const Index = () => {
                   <PropertyRecommendations
                     recordIdSuggestion={analysisResult.recordIdSuggestion}
                     recordNameSuggestion={analysisResult.recordNameSuggestion}
+                    recordIdNameSuggestions={analysisResult.recordIdNameSuggestions}
                     propertyRecommendations={analysisResult.propertyRecommendations}
                     uomSuggestions={[]}
                   />

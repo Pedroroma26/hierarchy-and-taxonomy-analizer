@@ -16,17 +16,11 @@ interface HeaderSelectorProps {
 }
 
 export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps) => {
-  // Detect UoM/logistics headers
-  const uomHeaders = useMemo(() => {
-    return headers.filter(h => detectUomAndLogistics(h));
-  }, [headers]);
-
-  // Non-UoM headers selected by default, UoM headers deselected
+  // All headers selected by default (no auto-detection)
   const [selectedHeaders, setSelectedHeaders] = useState<Set<string>>(
-    new Set(headers.filter(h => !uomHeaders.includes(h)))
+    new Set(headers)
   );
   const [hoveredHeader, setHoveredHeader] = useState<string | null>(null);
-  const [showUomInfo, setShowUomInfo] = useState(uomHeaders.length > 0);
 
   const toggleHeader = (header: string) => {
     const newSelected = new Set(selectedHeaders);
@@ -44,13 +38,6 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
 
   const deselectAll = () => {
     setSelectedHeaders(new Set());
-  };
-
-  const enableUomHeaders = () => {
-    const newSelected = new Set(selectedHeaders);
-    uomHeaders.forEach(h => newSelected.add(h));
-    setSelectedHeaders(newSelected);
-    setShowUomInfo(false);
   };
 
   const handleConfirm = () => {
@@ -89,47 +76,6 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
               </p>
             </div>
 
-            {showUomInfo && uomHeaders.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                transition={{ duration: 0.3 }}
-              >
-                <Alert className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-primary/30 shadow-sm">
-                  <Info className="h-4 w-4 text-primary" />
-                  <AlertDescription className="text-sm">
-                    <div className="space-y-3">
-                      <p className="font-semibold text-foreground">
-                        {uomHeaders.length} UoM/logistics propert{uomHeaders.length === 1 ? 'y' : 'ies'} auto-disabled
-                      </p>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        Properties related to units of measure, quantities, and logistics are automatically 
-                        assigned to SKU-level and excluded from hierarchy analysis.
-                      </p>
-                      <div className="flex gap-2 mt-3">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={enableUomHeaders}
-                          className="gap-2 hover:bg-primary/10 hover:border-primary transition-all"
-                        >
-                          <CheckCircle2 className="w-3 h-3" />
-                          Enable Properties
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setShowUomInfo(false)}
-                          className="hover:bg-muted"
-                        >
-                          Dismiss
-                        </Button>
-                      </div>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              </motion.div>
-            )}
 
           <div className="flex gap-3">
             <Button
@@ -155,7 +101,6 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
             <ScrollArea className="h-[520px] rounded-xl border-2 border-border/50 p-4 bg-muted/20 backdrop-blur-sm shadow-inner">
               <div className="space-y-2 pr-2">
                 {headers.map((header, index) => {
-                  const isUom = uomHeaders.includes(header);
                   const isSelected = selectedHeaders.has(header);
                   const isHovered = hoveredHeader === header;
                   return (
@@ -177,21 +122,26 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
                       <Checkbox
                         id={`header-${index}`}
                         checked={isSelected}
-                        onCheckedChange={() => toggleHeader(header)}
+                        onCheckedChange={(checked) => {
+                          // Prevent event bubbling issues
+                          const newSelected = new Set(selectedHeaders);
+                          if (checked) {
+                            newSelected.add(header);
+                          } else {
+                            newSelected.delete(header);
+                          }
+                          setSelectedHeaders(newSelected);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
                         className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                       />
                       <label
                         htmlFor={`header-${index}`}
-                        className="flex-1 text-sm font-medium cursor-pointer flex items-center gap-2"
+                        className="flex-1 text-sm font-medium cursor-pointer"
                       >
                         <span className={isHovered ? 'text-primary font-semibold' : ''}>
                           {header}
                         </span>
-                        {isUom && (
-                          <Badge variant="outline" className="text-xs bg-muted">
-                            UoM
-                          </Badge>
-                        )}
                       </label>
                     </motion.div>
                   );

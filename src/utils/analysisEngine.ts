@@ -26,6 +26,15 @@ export interface UomSuggestion {
   }[];
 }
 
+export interface RecordIdNameSuggestion {
+  level: number;
+  levelName: string;
+  recordIdCandidates: string[];  // Top 3 candidates
+  recordNameCandidates: string[];  // Top 3 candidates
+  selectedRecordId: string;
+  selectedRecordName?: string;
+}
+
 export interface ProductDomain {
   type: 'Electronics' | 'Apparel' | 'Food' | 'Furniture' | 'General';
   confidence: number;
@@ -55,6 +64,7 @@ export interface AnalysisResult {
   taxonomyPaths: TaxonomyPath[];
   recordIdSuggestion: string | null;
   recordNameSuggestion: string | null;
+  recordIdNameSuggestions: RecordIdNameSuggestion[];  // Per-level suggestions
   propertyRecommendations: PropertyRecommendation[];
   uomSuggestions: UomSuggestion[];
   productDomain: ProductDomain;
@@ -85,29 +95,45 @@ export const updateThresholds = (parent: number, childrenMin: number, childrenMa
 export const analyzeProductData = (
   headers: string[],
   data: any[][],
-  customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number }
+  customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number; minPropertiesPerLevel?: number },
+  forcedSkuHeaders?: string[]
 ): AnalysisResult => {
   // Use custom thresholds if provided
   if (customThresholds) {
     updateThresholds(customThresholds.parent, customThresholds.childrenMin, customThresholds.childrenMax, customThresholds.sku);
   }
+  
+  const MIN_PROPERTIES_PER_LEVEL = customThresholds?.minPropertiesPerLevel || 5;
 
   // Detect product domain
   const productDomain = detectProductDomain(headers, data);
 
-  // Calculate cardinality scores
+  // Calculate cardinality scores for ALL headers (including item-level)
   const cardinalityScores = calculateCardinalityScores(headers, data);
 
-  // Auto-detect UoM/logistics headers
-  const autoExcludedHeaders = headers.filter(h => detectUomAndLogistics(h));
+  // Determine which headers to force to SKU-level
+  // Priority: forcedSkuHeaders (user selection) > auto-detected item-level
+  let itemLevelHeaders: string[];
+  
+  if (forcedSkuHeaders && forcedSkuHeaders.length > 0) {
+    // Use user-selected forced headers
+    itemLevelHeaders = forcedSkuHeaders;
+    console.log('🔍 DEBUG - Using user-forced SKU headers:', itemLevelHeaders.length, itemLevelHeaders);
+  } else {
+    // Auto-detect item-level headers (SKU, EAN, measurements, etc.)
+    itemLevelHeaders = headers.filter(h => detectUomAndLogistics(h));
+    console.log('🔍 DEBUG - Item-level headers auto-detected:', itemLevelHeaders.length, itemLevelHeaders);
+  }
 
-  // Determine hierarchy based on cardinality (excluding UoM/logistics)
+  // Determine hierarchy based on cardinality
+  // Item-level headers are analyzed but will be forced to SKU-level
   const { hierarchy, properties, confidence, propertiesWithoutValues } = determineHierarchy(
     cardinalityScores, 
     headers, 
     productDomain,
     data,
-    autoExcludedHeaders
+    MIN_PROPERTIES_PER_LEVEL,
+    itemLevelHeaders  // Pass as hint, not exclusion
   );
 
   // Generate alternative hierarchies
@@ -133,6 +159,9 @@ export const analyzeProductData = (
   // Detect orphaned/inconsistent records
   const orphanedRecords = detectOrphanedRecords(hierarchy, data, headers);
 
+  // Generate Record ID/Name suggestions per level
+  const recordIdNameSuggestions = generateRecordIdNameSuggestions(hierarchy, headers, data);
+
   return {
     cardinalityScores,
     hierarchy,
@@ -141,6 +170,7 @@ export const analyzeProductData = (
     taxonomyPaths,
     recordIdSuggestion,
     recordNameSuggestion,
+    recordIdNameSuggestions,
     propertyRecommendations,
     uomSuggestions,
     productDomain,
@@ -168,13 +198,15 @@ const calculateCardinalityScores = (
     const cardinality = totalCount > 0 ? uniqueCount / totalCount : 0;
 
     // 4-level classification based on new thresholds
-    let classification: 'high' | 'medium' | 'low';
+    let classification: 'level1' | 'level2' | 'level3' | 'level4';
     if (cardinality >= SKU_THRESHOLD) {
-      classification = 'high'; // SKU/Attribute level (≥98%)
+      classification = 'level4'; // SKU/Attribute level (≥98%)
+    } else if (cardinality >= CHILDREN_THRESHOLD_MAX) {
+      classification = 'level3'; // Grandchildren (75%-98%)
     } else if (cardinality >= CHILDREN_THRESHOLD_MIN) {
-      classification = 'medium'; // Children/Grandchildren (50%-75%)
+      classification = 'level2'; // Children (50%-75%)
     } else {
-      classification = 'low'; // Parent level (≤2%)
+      classification = 'level1'; // Parent level (≤50%)
     }
 
     return {
@@ -245,13 +277,43 @@ const detectProductDomain = (headers: string[], data: any[][]): ProductDomain =>
   };
 };
 
-// Helper: Detect if field is likely a Record ID (numbers, codes, IDs)
+// Helper: Detect if field is likely a Record ID (unique identifiers)
 const isLikelyRecordId = (header: string): boolean => {
   const lower = header.toLowerCase();
   
-  // SKU/GTIN/EAN keywords (prioritize for lowest level)
-  const skuKeywords = ['sku', 'gtin', 'ean', 'upc', 'barcode', 'article', 'zuc', 'product_id', 'item_id', 'zun'];
+  // EXCLUDE dates and temporal fields - NEVER use as Record ID
+  const dateKeywords = [
+    'date', 'time', 'timestamp', 'created', 'modified', 'updated',
+    'valid', 'valid from', 'valid to', 'start', 'end', 'expiry', 'expiration',
+    'dispatch', 'availab', 'launch', 'discontinue'
+  ];
+  if (dateKeywords.some(kw => lower.includes(kw))) {
+    return false;
+  }
+  
+  // EXCLUDE UoM and logistics - NEVER use as Record ID
+  const excludeKeywords = [
+    'pack type', 'packing type', 'packaging type',
+    'unit', 'measure', 'weight', 'volume', 'liter', 'litre',
+    'pallet', 'case', 'layer', 'truck'
+  ];
+  if (excludeKeywords.some(kw => lower.includes(kw))) {
+    return false;
+  }
+  
+  // Taxonomy level indicators (L1, L2, L3, L4, etc.) - HIGHEST PRIORITY
+  if (/^l\d+$/i.test(lower.trim()) || /^level\s*\d+$/i.test(lower.trim())) {
+    return true;
+  }
+  
+  // SKU-level identifiers (for lowest level only)
+  const skuKeywords = ['sku', 'ean', 'gtin', 'upc', 'barcode'];
   if (skuKeywords.some(kw => lower.includes(kw))) {
+    return true;
+  }
+  
+  // ZUN/ZUC identifiers (common in retail/FMCG)
+  if (lower.includes('zun') || lower.includes('zuc')) {
     return true;
   }
   
@@ -263,23 +325,159 @@ const isLikelyRecordId = (header: string): boolean => {
 // Helper: Detect if field is likely a Record Name (text descriptions)
 const isLikelyRecordName = (header: string): boolean => {
   const lower = header.toLowerCase();
-  const nameKeywords = ['name', 'title', 'description', 'label', 'text', 'brand', 'category', 'sector', 'division'];
-  // Prefer single words or short phrases, avoid numbers
-  return nameKeywords.some(kw => lower.includes(kw)) && !lower.includes('id') && !lower.includes('code');
+  
+  // Expanded keywords for Record Name detection
+  const nameKeywords = [
+    'name', 'title', 'description', 'label', 'text', 
+    'brand', 'category', 'sector', 'division',
+    'product', 'item', 'article', 'material',
+    'type', 'class', 'group', 'family',
+    'designation', 'denomination', 'appellation',
+    'libellé', 'libelle'  // French for label/description
+  ];
+  
+  // CRITICAL: Exclude ID-like fields, codes, and UoM/logistics
+  const excludeKeywords = [
+    // IDs and codes
+    'id', 'code', 'number', 'num', 'sku', 'ean', 'gtin', 'upc',
+    'zun', 'zuc', 'barcode', 'plu', 'gln',
+    // Logistics (MUST exclude to avoid "EAN/UPC PAL" and "Pack Type" being selected)
+    'pal', 'car', 'lay', 'cs', 'cv', 'zuc', 'truck',
+    'pack type', 'packing type', 'packaging type', 'pack size',
+    // UoM
+    'unit', 'uom', 'measure', 'weight', 'volume', 'liter', 'litre',
+    // Inventory
+    'qty', 'quantity', 'stock', 'pallet', 'case', 'layer'
+  ];
+  
+  // Check if header contains name keywords but not exclude keywords
+  const hasNameKeyword = nameKeywords.some(kw => lower.includes(kw));
+  const hasExcludeKeyword = excludeKeywords.some(kw => lower.includes(kw));
+  
+  return hasNameKeyword && !hasExcludeKeyword;
 };
 
-// Helper: Detect UoM and logistics headers
+// Helper: Detect UoM, logistics, and SKU-level identifiers
 export const detectUomAndLogistics = (header: string): boolean => {
   const headerLower = header.toLowerCase();
-  const keywords = [
-    'uom', 'unit', 'measure', 'measurement', 'dimension',
-    'weight', 'height', 'width', 'depth', 'length',
-    'zuc', 'zun', 'numerator', 'denominator',
-    'price', 'cost', 'value', 'currency',
-    'pallet', 'package', 'packaging', 'logistics',
-    'quantity', 'qty', 'stock', 'inventory'
+  
+  // IMPORTANT: Exclude taxonomy/hierarchy level indicators (L1, L2, L3, L4, etc.)
+  // These are NOT item-level properties, they are hierarchy structure fields
+  const isTaxonomyLevel = /^l\d+$/i.test(headerLower.trim()) || 
+                          /^level\s*\d+$/i.test(headerLower.trim()) ||
+                          /^hierarchy\s*\d+$/i.test(headerLower.trim());
+  
+  if (isTaxonomyLevel) {
+    return false; // DO NOT exclude taxonomy levels from hierarchy analysis
+  }
+  
+  // SKU-level identifiers (always item-level)
+  const skuKeywords = [
+    'sku', 'ean', 'upc', 'gtin', 'isbn', 'asin',
+    'material number', 'material_number', 'materialnumber',
+    'item number', 'item_number', 'itemnumber',
+    'product id', 'product_id', 'productid',
+    'article number', 'article_number', 'articlenumber',
+    'part number', 'part_number', 'partnumber',
+    'barcode', 'qr code', 'qrcode'
   ];
-  return keywords.some(kw => headerLower.includes(kw));
+  
+  // UoM and measurement fields
+  const uomKeywords = [
+    'uom', 'unit of measure', 'unit', 'measure', 'measurement', 'dimension',
+    'weight', 'height', 'width', 'depth', 'length', 'size',
+    'volume', 'capacity', 'area',
+    'zuc', 'zun', 'numerator', 'denominator',
+    'base unit', 'conversion', 'factor',
+    // Liquid measurements
+    'liter', 'litre', 'litros', 'ml', 'milliliter',
+    'liters per case', 'litres per case', 'liter per pallet',
+    'gallon', 'fluid ounce', 'fl oz',
+    // Density and concentration
+    'density', 'densidade', 'concentration', 'specific gravity',
+    'viscosity', 'ph', 'alcohol content', 'abv'
+  ];
+  
+  // Logistics and inventory fields
+  const logisticsKeywords = [
+    'pallet', 'package', 'packaging', 'logistics',
+    'quantity', 'qty', 'stock', 'inventory',
+    'warehouse', 'storage', 'location',
+    'lead time', 'leadtime', 'delivery',
+    'cases per', 'units per', 'pack size',
+    'shelf life', 'shelflife', 'expiry', 'expiration',
+    'best before', 'use by', 'validade',
+    'batch', 'lot', 'lot number', 'batch number',
+    'serial', 'serial number',
+    // Additional logistics keywords
+    'lay', 'layers', 'cs', 'case', 'cv',
+    'type support', 'type of support', 'support',
+    'pal', 'car', 'pack type', 'packing type', 'packaging type'
+  ];
+  
+  // Pricing fields (item-level)
+  const pricingKeywords = [
+    'price', 'cost', 'value', 'currency',
+    'msrp', 'retail', 'wholesale',
+    'discount', 'margin', 'profit',
+    'tax', 'vat', 'duty', 'tariff'
+  ];
+  
+  // Dates and timestamps (item-level)
+  const dateKeywords = [
+    'creation date', 'created date', 'created on', 'created at',
+    'modified date', 'updated date', 'last modified',
+    'valid from', 'valid to', 'validity',
+    'start date', 'end date', 'effective date',
+    'launch date', 'discontinue date',
+    // Additional date keywords
+    'starting date', 'order dispatch', 'dispatch', 'dispatc'
+  ];
+  
+  // Technical specifications (item-level)
+  const technicalKeywords = [
+    'specification', 'spec', 'technical',
+    'compliance', 'certification', 'standard',
+    'ingredient', 'composition', 'formula',
+    // Allergens
+    'allergen', 'allergy', 'contains', 'may contain',
+    'gluten', 'dairy', 'lactose', 'milk', 'egg',
+    'peanut', 'tree nut', 'soy', 'wheat', 'fish', 'shellfish',
+    'sesame', 'sulfite', 'celery', 'mustard', 'lupin',
+    // Nutrition
+    'nutrition', 'nutritional', 'nutrient', 'nutritional label',
+    'calories', 'calorie', 'energy', 'kcal', 'kj',
+    'protein', 'carbohydrate', 'carbs', 'sugar', 'fat',
+    'saturated fat', 'trans fat', 'fiber', 'fibre', 'sodium', 'salt',
+    'vitamin', 'mineral', 'calcium', 'iron', 'potassium',
+    'serving size', 'portion', 'dose', 'daily value',
+    // Temperature and storage
+    'temperature', 'temp', 'storage temp', 'operating temp',
+    'min temp', 'max temp', 'temperature range',
+    'refrigerate', 'freeze', 'ambient', 'room temp',
+    'storage condition', 'storage conditions', 'keep cool', 'keep frozen',
+    'stackability', 'stackable',
+    // Legal and regulatory
+    'fda', 'usda', 'eu regulation', 'regulation',
+    'prop 65', 'proposition 65', 'california prop',
+    'reg 1169', 'regulation 1169', 'eu 1169',
+    'fir', 'food information regulation',
+    'gmo', 'non-gmo', 'organic', 'certified',
+    'halal', 'kosher', 'vegan', 'vegetarian',
+    'warning', 'caution', 'hazard', 'safety'
+  ];
+  
+  // Combine all keywords
+  const allKeywords = [
+    ...skuKeywords,
+    ...uomKeywords,
+    ...logisticsKeywords,
+    ...pricingKeywords,
+    ...dateKeywords,
+    ...technicalKeywords
+  ];
+  
+  return allKeywords.some(kw => headerLower.includes(kw));
 };
 
 const determineHierarchy = (
@@ -287,13 +485,13 @@ const determineHierarchy = (
   headers: string[],
   productDomain: ProductDomain,
   data: any[][],
-  excludedHeaders: string[] = []
+  minPropertiesPerLevel: number = 5,
+  itemLevelHeaders: string[] = []  // Renamed: these are hints, not exclusions
 ): { hierarchy: HierarchyLevel[]; properties: string[]; confidence: number; propertiesWithoutValues: string[] } => {
-  // Filter out excluded headers (UoM/logistics by default, can be overridden)
-  const validScores = cardinalityScores.filter(score => 
-    !excludedHeaders.includes(score.header)
-  );
-
+  // ANALYZE ALL HEADERS (including item-level)
+  // Item-level headers will be analyzed for Record ID detection
+  // but will be forced to SKU-level at the end
+  const validScores = cardinalityScores;  // Use ALL scores
   const validHeaders = validScores.map(s => s.header);
 
   const hierarchy: HierarchyLevel[] = [];
@@ -304,16 +502,20 @@ const determineHierarchy = (
     (a, b) => a.cardinality - b.cardinality
   );
 
-  // Classify headers into 4 cardinality levels
-  const parentHeaders = sortedScores
+  // DYNAMIC: Classify headers into 4 cardinality levels based on thresholds
+  const level1Headers = sortedScores
     .filter((score) => score.cardinality <= PARENT_THRESHOLD)
     .map((score) => score.header);
 
-  const childrenHeaders = sortedScores
-    .filter((score) => score.cardinality > PARENT_THRESHOLD && score.cardinality < CHILDREN_THRESHOLD_MAX)
+  const level2Headers = sortedScores
+    .filter((score) => score.cardinality > PARENT_THRESHOLD && score.cardinality < CHILDREN_THRESHOLD_MIN)
     .map((score) => score.header);
 
-  const grandchildrenHeaders = sortedScores
+  const level3Headers = sortedScores
+    .filter((score) => score.cardinality >= CHILDREN_THRESHOLD_MIN && score.cardinality < CHILDREN_THRESHOLD_MAX)
+    .map((score) => score.header);
+    
+  const level4Headers = sortedScores
     .filter((score) => score.cardinality >= CHILDREN_THRESHOLD_MAX && score.cardinality < SKU_THRESHOLD)
     .map((score) => score.header);
 
@@ -322,8 +524,8 @@ const determineHierarchy = (
     .map((score) => score.header);
 
   // Legacy variables for backward compatibility
-  const lowCardinalityHeaders = parentHeaders;
-  const mediumCardinalityHeaders = [...childrenHeaders, ...grandchildrenHeaders];
+  const lowCardinalityHeaders = level1Headers;
+  const mediumCardinalityHeaders = [...level2Headers, ...level3Headers, ...level4Headers];
   const highCardinalityHeaders = skuHeaders;
 
   // Determine if we have enough structure for a hierarchy
@@ -371,7 +573,23 @@ const determineHierarchy = (
     return uniqueValues.size / values.length >= 0.95; // At least 95% unique
   };
 
-  // Helper: Find Record ID with priority order and validation
+  // Helper: Check if header is a UoM/measurement field (should NOT be Record ID)
+  const isUomOrMeasurement = (header: string): boolean => {
+    const lower = header.toLowerCase();
+    
+    // CRITICAL: Check for measurement-related keywords
+    // These should NEVER be Record IDs
+    const measurementKeywords = [
+      'width', 'height', 'length', 'weight', 'volume', 'gross', 'net',
+      'unit of', 'measure', 'dimension', 'size', 'density', 'liter',
+      'numerator', 'denominator', 'stackability', 'layers', 'pallet',
+      'zuc', 'zun', 'pal', 'car', 'lay', 'cs', 'ean/upc'
+    ];
+    
+    return measurementKeywords.some(keyword => lower.includes(keyword));
+  };
+
+  // Helper: Find best Record ID from a set of headers
   const findBestRecordId = (headers: string[], isLowestLevel: boolean = false): string => {
     if (isLowestLevel) {
       // SKU-Level: Priority order - SKU > ZUN > GTIN > EAN > ZUC
@@ -394,9 +612,74 @@ const determineHierarchy = (
         
         if (candidate) return candidate;
       }
+    } else {
+      // NON-SKU LEVELS: NEVER use item-level headers OR UoM fields as Record ID
+      const nonItemLevelHeaders = headers.filter(h => !itemLevelHeaders.includes(h) && !isUomOrMeasurement(h));
+      
+      if (nonItemLevelHeaders.length === 0) {
+        console.log('⚠️ WARNING - All headers are item-level, using first header as Record ID');
+        return headers[0];
+      }
+      
+      // PRIORITY 1: Simple taxonomy codes (L1, L2, L3, L4, L7, L8, etc.)
+      const simpleCode = nonItemLevelHeaders.find(h => {
+        const lower = h.toLowerCase().trim();
+        return /^l\d+$/i.test(lower) && hasGoodRepresentation(h);
+      });
+      if (simpleCode) return simpleCode;
+      
+      // PRIORITY 2: Numeric codes (1-6 digits)
+      const numericCode = nonItemLevelHeaders.find(h => {
+        const trimmed = h.trim();
+        return /^\d{1,6}$/.test(trimmed) && 
+               hasGoodRepresentation(h) && 
+               isUnique(h);
+      });
+      if (numericCode) return numericCode;
+      
+      // PRIORITY 3: Short alphanumeric codes (2-6 characters)
+      const shortCode = nonItemLevelHeaders.find(h => {
+        const trimmed = h.trim();
+        return trimmed.length >= 2 && trimmed.length <= 6 && 
+               /^[a-z0-9_-]+$/i.test(trimmed) &&
+               isLikelyRecordId(h) && 
+               hasGoodRepresentation(h) && 
+               isUnique(h);
+      });
+      if (shortCode) return shortCode;
+      
+      // PRIORITY 4: Longer descriptive IDs (e.g., "Product_ID_123")
+      const descriptiveId = nonItemLevelHeaders.find(h => {
+        return isLikelyRecordId(h) && 
+               hasGoodRepresentation(h) && 
+               isUnique(h);
+      });
+      if (descriptiveId) return descriptiveId;
+      
+      // PRIORITY 3: Any ID-like field with full validation
+      let candidate = nonItemLevelHeaders.find(h => 
+        isLikelyRecordId(h) && 
+        hasGoodRepresentation(h) && 
+        isUnique(h)
+      );
+      if (candidate) return candidate;
+      
+      // FALLBACK 1: Relax uniqueness requirement
+      candidate = nonItemLevelHeaders.find(h => 
+        isLikelyRecordId(h) && 
+        hasGoodRepresentation(h)
+      );
+      if (candidate) return candidate;
+      
+      // FALLBACK 2: Just find any ID-like field
+      candidate = nonItemLevelHeaders.find(h => isLikelyRecordId(h));
+      if (candidate) return candidate;
+      
+      // FALLBACK 3: Use first non-item-level header
+      return nonItemLevelHeaders[0];
     }
     
-    // CRITICAL: For ALL levels - Try with full validation first
+    // For SKU-level, if no priority keywords found, try generic search
     let candidate = headers.find(h => 
       isLikelyRecordId(h) && 
       hasGoodRepresentation(h) && 
@@ -423,119 +706,246 @@ const determineHierarchy = (
     return headers[0];
   };
 
+  // Helper: Score headers for Record Name suitability (UNIFIED)
+  const scoreHeaderForRecordName = (header: string, recordId: string, usedRecordNames: string[] = []): number => {
+    if (header === recordId) return -1000; // Never same as Record ID
+    
+    // CRITICAL: Never reuse Record Name from another level
+    if (usedRecordNames.includes(header)) return -1000;
+    
+    const lower = header.toLowerCase();
+    let score = 0;
+    
+    // PRIORITY 1: "name" fields (HIGHEST)
+    if (lower.includes('name') && !lower.includes('code')) score += 100;
+    
+    // PRIORITY 2: "description" fields
+    else if (lower.includes('description')) {
+      score += 90;
+      // BONUS: Prefer shorter description fields (more concise)
+      // Subtract 0.01 per character to break ties
+      score -= header.length * 0.01;
+    }
+    
+    // PRIORITY 3: "brand" fields
+    else if (lower.includes('brand')) score += 80;
+    
+    // PRIORITY 4: Other name-like fields
+    else if (lower.includes('title') || lower.includes('label') || lower.includes('text')) score += 70;
+    
+    // CRITICAL: EXCLUDE logistics, UoM, dates, and technical fields
+    const excludeKeywords = [
+      // Logistics
+      'pack type', 'packing type', 'packaging type', 'pack size',
+      'pallet', 'pal', 'car', 'lay', 'cs', 'cv', 'truck',
+      // UoM
+      'unit', 'uom', 'measure', 'weight', 'volume', 'liter', 'litre',
+      // IDs and codes
+      'id', 'code', 'number', 'sku', 'ean', 'gtin', 'upc', 'barcode',
+      // Technical/dates
+      'supervisor', 'family', 'hierarchy', 'date', 'time', 'created', 'valid'
+    ];
+    
+    if (excludeKeywords.some(kw => lower.includes(kw))) {
+      score -= 200; // HEAVY penalty
+    }
+    
+    // Bonus for good representation
+    if (hasGoodRepresentation(header)) score += 10;
+    
+    return score;
+  };
+
   // Helper: Find Record ID and Name for a set of headers
-  const findRecordIdAndName = (headers: string[], isLowestLevel: boolean = false) => {
-    const recordId = findBestRecordId(headers, isLowestLevel);
-    const recordName = headers.find(h => isLikelyRecordName(h) && hasGoodRepresentation(h));
+  const findRecordIdAndName = (levelHeaders: string[], isLowestLevel: boolean = false, usedRecordNames: string[] = []) => {
+    // If level has no headers yet, search in ALL available headers
+    const searchHeaders = levelHeaders.length > 0 ? levelHeaders : validHeaders;
+    const recordId = findBestRecordId(searchHeaders, isLowestLevel);
+    
+    // Score all headers (excluding already-used Record Names)
+    const scoredHeaders = searchHeaders
+      .map(h => ({ header: h, score: scoreHeaderForRecordName(h, recordId, usedRecordNames) }))
+      .sort((a, b) => b.score - a.score);
+    
+    // DEBUG: Show top 10 scored headers
+    if (isLowestLevel) {
+      console.log(`🔍 DEBUG - Top 10 Record Name candidates (SKU-level):`);
+      scoredHeaders.slice(0, 10).forEach((h, i) => {
+        console.log(`  ${i + 1}. "${h.header}" (score: ${h.score})`);
+      });
+    }
+    
+    // PRIORITY 1: Try to find a header with positive score
+    let recordName = scoredHeaders.find(h => h.score > 0)?.header;
+    
+    // PRIORITY 2: If ALL headers have negative scores (e.g., all are logistics/UoM)
+    // Pick the LEAST negative one (closest to 0)
+    if (!recordName && scoredHeaders.length > 0) {
+      // Look for headers with "description" or "name" even if penalized
+      const descOrName = scoredHeaders.find(h => {
+        const lower = h.header.toLowerCase();
+        return (lower.includes('description') || lower.includes('name')) && h.header !== recordId;
+      });
+      
+      recordName = descOrName ? descOrName.header : scoredHeaders[0].header;
+      console.warn(`⚠️ WARNING - No ideal Record Name found. Using least-bad option: "${recordName}" (score: ${scoredHeaders[0].score})`);
+    }
+    
+    if (!recordName) {
+      console.warn(`⚠️ WARNING - Could not find suitable Record Name for level (Record ID: "${recordId}")`);
+    }
+    
     return { recordId, recordName };
   };
 
-  if (totalLowMedium === 0) {
-    // No repetitive data - STANDALONE MODEL (all products are independent)
-    const { recordId, recordName } = findRecordIdAndName(validHeaders, true);
-    hierarchy.push({
-      level: 1,
-      name: 'SKU-Level Properties',
-      headers: validHeaders, // All fields are SKU-level
-      recordId,
-      recordName,
-    });
-    confidence = 0.8;
-  } else if (totalLowMedium === 1) {
-    // 1 repetitive field - SINGLE LEVEL HIERARCHY
-    const levelHeaders = [...lowCardinalityHeaders, ...mediumCardinalityHeaders];
-    const { recordId, recordName } = findRecordIdAndName(levelHeaders);
-    hierarchy.push({
-      level: 1,
-      name: 'Parent Level (Taxonomy)',
-      headers: levelHeaders,
-      recordId,
-      recordName,
-    });
-    confidence = 0.75;
-  } else if (totalLowMedium === 2) {
-    // 2 repetitive fields - TWO LEVEL HIERARCHY
-    const level1Headers = lowCardinalityHeaders;
-    const level2Headers = [...mediumCardinalityHeaders, ...highCardinalityHeaders];
-    
-    hierarchy.push({
-      level: 1,
+  // DYNAMIC HIERARCHY BUILDING: Build only levels that have data based on thresholds
+  const hierarchyLevels: { name: string; headers: string[]; isLowest: boolean }[] = [];
+  
+  // Add Level 1 (Parent) if exists AND has enough properties
+  if (level1Headers.length >= minPropertiesPerLevel) {
+    hierarchyLevels.push({
       name: 'Parent Level (Taxonomy)',
       headers: level1Headers,
-      ...findRecordIdAndName(level1Headers),
+      isLowest: false,
     });
-    hierarchy.push({
-      level: 2,
-      name: 'SKU-Level Properties',
-      headers: level2Headers,
-      ...findRecordIdAndName(level2Headers, true),
-    });
-    confidence = 0.85;
-  } else if (totalLowMedium === 3) {
-    // 3 repetitive fields - THREE LEVEL HIERARCHY
-    const level1Headers = lowCardinalityHeaders;
-    const level2Headers = mediumCardinalityHeaders.slice(0, Math.ceil(mediumCardinalityHeaders.length / 2));
-    const level3Headers = [...mediumCardinalityHeaders.slice(Math.ceil(mediumCardinalityHeaders.length / 2)), ...highCardinalityHeaders];
-    
-    hierarchy.push({
-      level: 1,
-      name: 'Parent Level (Taxonomy)',
-      headers: level1Headers,
-      ...findRecordIdAndName(level1Headers),
-    });
-    hierarchy.push({
-      level: 2,
+  }
+  
+  // Add Level 2 (Children) if exists AND has enough properties
+  if (level2Headers.length >= minPropertiesPerLevel) {
+    hierarchyLevels.push({
       name: 'Child Level',
       headers: level2Headers,
-      ...findRecordIdAndName(level2Headers),
+      isLowest: false,
     });
-    hierarchy.push({
-      level: 3,
-      name: 'SKU-Level Properties',
+  }
+  
+  // Add Level 3 (Grandchildren) if exists AND has enough properties
+  if (level3Headers.length >= minPropertiesPerLevel) {
+    hierarchyLevels.push({
+      name: 'Grandchild Level',
       headers: level3Headers,
-      ...findRecordIdAndName(level3Headers, true),
+      isLowest: false,
     });
-    confidence = 0.9;
-  } else {
-    // 4+ repetitive fields - MULTI-LEVEL HIERARCHY
-    const numLevels = Math.min(4, Math.ceil(totalLowMedium / 2) + 1);
-    
-    // Level 1: High Repetition (Parent/Taxonomy)
-    hierarchy.push({
-      level: 1,
-      name: 'Parent Level (Taxonomy)',
-      headers: lowCardinalityHeaders,
-      ...findRecordIdAndName(lowCardinalityHeaders),
+  }
+  
+  // Add Level 4 (Pre-SKU) if exists AND has enough properties
+  if (level4Headers.length >= minPropertiesPerLevel) {
+    hierarchyLevels.push({
+      name: 'Variant Level',
+      headers: level4Headers,
+      isLowest: false,
     });
+  }
+  
+  // If NO hierarchy levels were created, merge everything into one level
+  if (hierarchyLevels.length === 0) {
+    // Combine all non-SKU headers into a single level
+    const allNonSkuHeaders = [...level1Headers, ...level2Headers, ...level3Headers, ...level4Headers];
+    if (allNonSkuHeaders.length > 0) {
+      hierarchyLevels.push({
+        name: 'Parent Level (Taxonomy)',
+        headers: allNonSkuHeaders,
+        isLowest: false,
+      });
+    }
+  }
+  
+  // CRITICAL: Ensure ALL headers are classified in at least one level
+  // Find unclassified headers
+  const classifiedHeaders = new Set<string>();
+  level1Headers.forEach(h => classifiedHeaders.add(h));
+  level2Headers.forEach(h => classifiedHeaders.add(h));
+  level3Headers.forEach(h => classifiedHeaders.add(h));
+  level4Headers.forEach(h => classifiedHeaders.add(h));
+  skuHeaders.forEach(h => classifiedHeaders.add(h));
+  
+  const unclassifiedHeaders = validHeaders.filter(h => !classifiedHeaders.has(h));
+  
+  if (unclassifiedHeaders.length > 0) {
+    console.warn(`⚠️ WARNING - ${unclassifiedHeaders.length} unclassified headers found, forcing to SKU-level:`, unclassifiedHeaders);
+    // Add unclassified headers to SKU level
+    skuHeaders.push(...unclassifiedHeaders);
+  }
+  
+  // Always add SKU level (even if empty, properties will be added later)
+  hierarchyLevels.push({
+    name: 'SKU-Level Properties',
+    headers: skuHeaders,
+    isLowest: true,
+  });
+  
+  console.log('🔍 DEBUG - Total classified headers:', classifiedHeaders.size);
+  console.log('🔍 DEBUG - Total valid headers:', validHeaders.length);
+  console.log('🔍 DEBUG - Unclassified headers:', unclassifiedHeaders.length);
+  
+  // Mark last level as lowest
+  if (hierarchyLevels.length > 0) {
+    hierarchyLevels[hierarchyLevels.length - 1].isLowest = true;
+  }
+  
+  // Build hierarchy from dynamic levels
+  console.log('🔍 DEBUG - Building hierarchy from', hierarchyLevels.length, 'levels');
+  console.log('🔍 DEBUG - Total headers to distribute:', headers.length);
+  
+  // Track Record Names already used to prevent duplication
+  const usedRecordNames: string[] = [];
+  
+  hierarchyLevels.forEach((levelData, index) => {
+    const { recordId, recordName } = findRecordIdAndName(levelData.headers, levelData.isLowest, usedRecordNames);
     
-    // Middle levels: Medium Repetition
-    const mediumPerLevel = Math.ceil(mediumCardinalityHeaders.length / (numLevels - 2));
-    for (let i = 0; i < numLevels - 2; i++) {
-      const start = i * mediumPerLevel;
-      const end = Math.min((i + 1) * mediumPerLevel, mediumCardinalityHeaders.length);
-      if (start < mediumCardinalityHeaders.length) {
-        const levelHeaders = mediumCardinalityHeaders.slice(start, end);
-        hierarchy.push({
-          level: i + 2,
-          name: `Level ${i + 2}`,
-          headers: levelHeaders,
-          ...findRecordIdAndName(levelHeaders),
-        });
-      }
+    // Add this Record Name to the used list
+    if (recordName) {
+      usedRecordNames.push(recordName);
     }
     
-    // Last level: SKU-Level Properties (High Uniqueness)
-    const lastMediumIndex = (numLevels - 2) * mediumPerLevel;
-    const skuLevelHeaders = [...mediumCardinalityHeaders.slice(lastMediumIndex), ...highCardinalityHeaders];
-    hierarchy.push({
-      level: numLevels,
-      name: 'SKU-Level Properties',
-      headers: skuLevelHeaders,
-      ...findRecordIdAndName(skuLevelHeaders, true),
+    console.log(`🔍 DEBUG - Level ${index + 1} BEFORE cleaning:`, levelData.headers.length, 'headers');
+    console.log(`🔍 DEBUG - Level ${index + 1} Record ID:`, recordId);
+    console.log(`🔍 DEBUG - Level ${index + 1} Record Name:`, recordName);
+    
+    // Remove Record ID and Record Name from headers list to avoid duplication
+    const cleanHeaders = levelData.headers.filter(h => {
+      if (recordId && h === recordId) {
+        console.log(`🔍 DEBUG - Removing Record ID "${recordId}" from level ${index + 1} headers`);
+        return false;
+      }
+      if (recordName && h === recordName) {
+        console.log(`🔍 DEBUG - Removing Record Name "${recordName}" from level ${index + 1} headers`);
+        return false;
+      }
+      return true;
     });
     
-    confidence = 0.85;
+    // CRITICAL: Verify Record ID was actually removed
+    if (recordId && cleanHeaders.includes(recordId)) {
+      console.error(`❌ ERROR - Record ID "${recordId}" still in headers after cleaning!`);
+    }
+    if (recordName && cleanHeaders.includes(recordName)) {
+      console.error(`❌ ERROR - Record Name "${recordName}" still in headers after cleaning!`);
+    }
+    
+    console.log(`🔍 DEBUG - Level ${index + 1} AFTER cleaning:`, cleanHeaders.length, 'headers');
+    
+    hierarchy.push({
+      level: index + 1,
+      name: levelData.name,
+      headers: cleanHeaders,
+      recordId,
+      recordName,
+    });
+  });
+  
+  // Adjust confidence based on number of levels
+  if (hierarchyLevels.length === 1) {
+    confidence = 0.7; // Standalone model
+  } else if (hierarchyLevels.length === 2) {
+    confidence = 0.8; // Simple 2-level
+  } else if (hierarchyLevels.length === 3) {
+    confidence = 0.9; // Good 3-level
+  } else {
+    confidence = 0.95; // Complex 4+ level
   }
+  
+  // OLD LOGIC REMOVED - Now using dynamic level building above
 
   // Helper: Check if property has values in data
   const hasValues = (header: string, data: any[][]): boolean => {
@@ -547,92 +957,316 @@ const determineHierarchy = (
       const value = row[headerIndex];
       return value !== null && value !== undefined && value !== '';
     }).length;
-    
     return nonEmptyCount / data.length >= 0.1; // At least 10% filled
   };
 
-  // DYNAMIC HIERARCHY OPTIMIZATION (Aggregation Rule)
-  // Rule: If a level results in fewer than 5 unique values under its parent, merge with next level
-  const MIN_UNIQUE_VALUES_PER_LEVEL = 5;
-  const consolidatedHierarchy: typeof hierarchy = [];
-  
-  for (let i = 0; i < hierarchy.length; i++) {
-    const level = hierarchy[i];
-    
-    // If this is the last level, always keep it (SKU-Level)
-    if (i === hierarchy.length - 1) {
-      consolidatedHierarchy.push(level);
-      continue;
-    }
-    
-    // Count unique values for this level in the data
-    const levelHeaderIndices = level.headers.map(h => headers.indexOf(h));
-    const uniqueCombinations = new Set();
-    data.forEach(row => {
-      const combo = levelHeaderIndices.map(idx => row[idx]).join('|');
-      if (combo.trim()) uniqueCombinations.add(combo);
-    });
-    
-    // If level produces < 5 unique nodes, merge with next level
-    if (uniqueCombinations.size < MIN_UNIQUE_VALUES_PER_LEVEL && i < hierarchy.length - 1) {
-      const nextLevel = hierarchy[i + 1];
-      nextLevel.headers = [...level.headers, ...nextLevel.headers];
-      nextLevel.level = level.level; // Keep current level number
-      nextLevel.name = level.name; // Keep current level name
-      // Skip this level, it's merged
-      continue;
-    }
-    
-    consolidatedHierarchy.push(level);
-  }
-  
-  // Renumber levels after consolidation
-  consolidatedHierarchy.forEach((level, index) => {
-    level.level = index + 1;
-    // Update name for last level
-    if (index === consolidatedHierarchy.length - 1) {
-      level.name = 'SKU-Level Properties';
-    }
-  });
+  // Hierarchy is already optimized by dynamic level building above
+  // Just use it directly
+  const consolidatedHierarchy = hierarchy;
 
-  // Separate properties with and without values
+  // IMPORTANT: Keep ALL properties in hierarchy, just report which ones have no values
   const propertiesWithoutValues: string[] = [];
-  const allHeaders = consolidatedHierarchy.flatMap(level => level.headers);
   
-  // Check each property in the last level for values
-  if (consolidatedHierarchy.length > 0) {
-    const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
-    const headersWithValues: string[] = [];
-    
-    lastLevel.headers.forEach(header => {
-      if (hasValues(header, data)) {
-        headersWithValues.push(header);
-      } else {
+  // Check ALL properties across ALL levels for values (for reporting only)
+  consolidatedHierarchy.forEach(level => {
+    level.headers.forEach(header => {
+      if (!hasValues(header, data)) {
         propertiesWithoutValues.push(header);
       }
     });
-    
-    lastLevel.headers = headersWithValues;
-  }
+  });
+  
+  console.log('🔍 DEBUG - Properties without values (kept in hierarchy):', propertiesWithoutValues.length, propertiesWithoutValues);
+  
+  // DO NOT REMOVE properties without values - keep them in hierarchy
+  // This ensures we maintain the total property count
 
-  // Add excluded UoM/logistics fields to SKU-level (last level)
-  const excludedFields = excludedHeaders.filter(h => headers.includes(h));
-  if (consolidatedHierarchy.length > 0 && excludedFields.length > 0) {
+  // Force item-level headers to SKU-level (last level)
+  // These headers were analyzed for Record ID but must appear at the lowest level
+  const itemLevelFields = itemLevelHeaders.filter(h => headers.includes(h));
+  
+  console.log('🔍 DEBUG - Item-level fields to force to SKU:', itemLevelFields.length, itemLevelFields);
+  console.log('🔍 DEBUG - Last level before forcing:', consolidatedHierarchy.length > 0 ? consolidatedHierarchy[consolidatedHierarchy.length - 1].headers.length : 'NO LEVELS');
+  
+  if (consolidatedHierarchy.length > 0 && itemLevelFields.length > 0) {
     const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
-    excludedFields.forEach(field => {
-      if (hasValues(field, data)) {
-        if (!lastLevel.headers.includes(field)) {
-          lastLevel.headers.push(field);
+    
+    // CRITICAL: Store Record ID/Name of last level BEFORE removing
+    const lastLevelRecordId = lastLevel.recordId;
+    const lastLevelRecordName = lastLevel.recordName;
+    
+    // CRITICAL: Collect ALL description/name fields from other levels BEFORE removing
+    // Include BOTH headers AND Record Names (which will be re-added during merge)
+    const descriptionNameFields: string[] = [];
+    consolidatedHierarchy.forEach((level) => {
+      // Check headers
+      level.headers.forEach(h => {
+        const lower = h.toLowerCase();
+        if ((lower.includes('description') || lower.includes('name')) && 
+            !lower.includes('code') && 
+            !descriptionNameFields.includes(h)) {
+          descriptionNameFields.push(h);
         }
-      } else {
-        if (!propertiesWithoutValues.includes(field)) {
-          propertiesWithoutValues.push(field);
+      });
+      
+      // CRITICAL: Also check Record Name (it will be re-added during merge)
+      if (level.recordName) {
+        const lower = level.recordName.toLowerCase();
+        if ((lower.includes('description') || lower.includes('name')) && 
+            !lower.includes('code') && 
+            !descriptionNameFields.includes(level.recordName)) {
+          descriptionNameFields.push(level.recordName);
+          console.log(`🔍 DEBUG - Found Record Name with description/name: "${level.recordName}"`);
         }
       }
     });
+    
+    console.log(`🔍 DEBUG - Description/Name fields to preserve (${descriptionNameFields.length}):`, descriptionNameFields);
+    
+    // CRITICAL: Remove item-level fields from ALL levels (including last level to avoid duplicates)
+    // This includes BOTH auto-detected AND user-forced fields
+    consolidatedHierarchy.forEach((level, index) => {
+      const beforeCount = level.headers.length;
+      level.headers = level.headers.filter(h => !itemLevelFields.includes(h));
+      const afterCount = level.headers.length;
+      
+      if (beforeCount !== afterCount) {
+        console.log(`🔍 DEBUG - Removed ${beforeCount - afterCount} item-level fields from level ${index + 1}`);
+      }
+    });
+    
+    // Add all item-level fields to SKU-level (now guaranteed no duplicates)
+    lastLevel.headers.push(...itemLevelFields);
+    
+    // CRITICAL: Add description/name fields to SKU-level if not already there
+    descriptionNameFields.forEach(field => {
+      if (!lastLevel.headers.includes(field)) {
+        lastLevel.headers.push(field);
+        console.log(`🔍 DEBUG - Adding description/name field to SKU-level: "${field}"`);
+      }
+    });
+    
+    // CRITICAL: Clear Record ID/Name of last level if they are in itemLevelFields
+    // They will be re-selected later from the forced headers
+    if (lastLevelRecordId && itemLevelFields.includes(lastLevelRecordId)) {
+      console.log(`🔍 DEBUG - Clearing Record ID "${lastLevelRecordId}" from last level (will be in forced headers)`);
+      lastLevel.recordId = undefined;
+    }
+    if (lastLevelRecordName && itemLevelFields.includes(lastLevelRecordName)) {
+      console.log(`🔍 DEBUG - Clearing Record Name "${lastLevelRecordName}" from last level (will be in forced headers)`);
+      lastLevel.recordName = undefined;
+    }
+    
+    // RE-SELECT Record ID and Record Name from the forced headers
+    console.log(`🔍 DEBUG - SKU-level headers BEFORE re-selection (${lastLevel.headers.length}):`, lastLevel.headers.slice(0, 20));
+    
+    // Debug: Show which headers have "description" or "name"
+    const descNameHeaders = lastLevel.headers.filter(h => {
+      const lower = h.toLowerCase();
+      return (lower.includes('description') || lower.includes('name')) && !lower.includes('code');
+    });
+    console.log(`🔍 DEBUG - Description/Name headers available (${descNameHeaders.length}):`, descNameHeaders);
+    
+    // CRITICAL: Collect Record Names already used in OTHER levels to prevent duplication
+    const usedRecordNamesInOtherLevels = consolidatedHierarchy
+      .filter(level => level !== lastLevel && level.recordName)
+      .map(level => level.recordName!);
+    
+    const { recordId: newRecordId, recordName: newRecordName } = findRecordIdAndName(lastLevel.headers, true, usedRecordNamesInOtherLevels);
+    lastLevel.recordId = newRecordId;
+    lastLevel.recordName = newRecordName;
+    
+    console.log(`🔍 DEBUG - Re-selected Record ID for last level: ${newRecordId}`);
+    console.log(`🔍 DEBUG - Re-selected Record Name for last level: ${newRecordName}`);
+    
+    // Now remove the new Record ID/Name from headers
+    lastLevel.headers = lastLevel.headers.filter(h => h !== newRecordId && h !== newRecordName);
+    
+    console.log('🔍 DEBUG - Last level after forcing and re-selection:', lastLevel.headers.length, 'headers');
   }
+  
+  // STEP 1: DEDUPLICATION FIRST - Remove properties that appear in multiple levels
+  // This ensures accurate property counts for consolidation
+  let tempHierarchy = [...consolidatedHierarchy];
+  
+  console.log('🔍 DEBUG - Starting deduplication before consolidation...');
+  const seenPropertiesPreConsolidation = new Set<string>();
+  
+  // Iterate from last level to first (bottom-up)
+  for (let i = tempHierarchy.length - 1; i >= 0; i--) {
+    const level = tempHierarchy[i];
+    
+    // CRITICAL: Add Record ID and Record Name to seen properties
+    if (level.recordId) seenPropertiesPreConsolidation.add(level.recordId);
+    if (level.recordName) seenPropertiesPreConsolidation.add(level.recordName);
+    
+    // Remove properties that were already seen in lower levels
+    const beforeCount = level.headers.length;
+    level.headers = level.headers.filter(h => {
+      if (seenPropertiesPreConsolidation.has(h)) {
+        console.log(`🔍 DEBUG - [Pre-consolidation] Removing duplicate "${h}" from level ${i + 1}`);
+        return false;
+      }
+      seenPropertiesPreConsolidation.add(h);
+      return true;
+    });
+    
+    if (beforeCount !== level.headers.length) {
+      console.log(`🔍 DEBUG - Level ${i + 1} after deduplication: ${level.headers.length} headers (was ${beforeCount})`);
+    }
+  }
+  
+  // STEP 2: CONSOLIDATE LEVELS - Merge levels with < minPropertiesPerLevel into next level
+  // Process from end to beginning to handle cascading merges
+  console.log('🔍 DEBUG - Starting consolidation after deduplication...');
+  
+  // Iterate backwards (except last level which is always kept)
+  for (let i = tempHierarchy.length - 2; i >= 0; i--) {
+    const currentLevel = tempHierarchy[i];
+    
+    // CRITICAL: Count properties INCLUDING Record ID and Record Name
+    const totalPropsInLevel = currentLevel.headers.length + 
+                              (currentLevel.recordId ? 1 : 0) + 
+                              (currentLevel.recordName ? 1 : 0);
+    
+    console.log(`🔍 DEBUG - Checking level ${i + 1}: ${totalPropsInLevel} props (${currentLevel.headers.length} headers + ${currentLevel.recordId ? 1 : 0} ID + ${currentLevel.recordName ? 1 : 0} Name) (min: ${minPropertiesPerLevel})`);
+    
+    // If level has < minPropertiesPerLevel, merge with next level
+    if (totalPropsInLevel < minPropertiesPerLevel) {
+      const nextLevel = tempHierarchy[i + 1];
+      console.log(`🔍 DEBUG - Merging level ${i + 1} (${currentLevel.headers.length} props) into level ${i + 2} (${nextLevel.headers.length} props)`);
+      
+      // CRITICAL: Add Record ID and Record Name back to headers before merging
+      // BUT skip if they are already Record ID/Name of the next level
+      const currentLevelAllHeaders = [...currentLevel.headers];
+      
+      if (currentLevel.recordId && 
+          currentLevel.recordId !== nextLevel.recordId && 
+          currentLevel.recordId !== nextLevel.recordName) {
+        currentLevelAllHeaders.push(currentLevel.recordId);
+        console.log(`🔍 DEBUG - Re-adding Record ID "${currentLevel.recordId}" from merged level`);
+      } else if (currentLevel.recordId) {
+        console.log(`🔍 DEBUG - Skipping Record ID "${currentLevel.recordId}" (already used in next level)`);
+      }
+      
+      if (currentLevel.recordName && 
+          currentLevel.recordName !== nextLevel.recordId && 
+          currentLevel.recordName !== nextLevel.recordName) {
+        currentLevelAllHeaders.push(currentLevel.recordName);
+        console.log(`🔍 DEBUG - Re-adding Record Name "${currentLevel.recordName}" from merged level`);
+      } else if (currentLevel.recordName) {
+        console.log(`🔍 DEBUG - Skipping Record Name "${currentLevel.recordName}" (already used in next level)`);
+      }
+      
+      // Merge current into next (with deduplication)
+      const mergedHeaders = [...currentLevelAllHeaders, ...nextLevel.headers];
+      nextLevel.headers = Array.from(new Set(mergedHeaders)); // Remove duplicates
+      
+      // CRITICAL: If we re-added a Record Name, and it's now the Record Name of next level, REMOVE it from headers
+      if (nextLevel.recordName && nextLevel.headers.includes(nextLevel.recordName)) {
+        nextLevel.headers = nextLevel.headers.filter(h => h !== nextLevel.recordName);
+        console.log(`🔍 DEBUG - Removed Record Name "${nextLevel.recordName}" from merged level headers (already used as Record Name)`);
+      }
+      
+      // Remove current level
+      tempHierarchy.splice(i, 1);
+    }
+  }
+  
+  const finalHierarchy = tempHierarchy;
+  
+  // STEP 3: FINAL DEDUPLICATION (after merges) - Catch any duplicates introduced during consolidation
+  console.log('🔍 DEBUG - Final deduplication check after consolidation...');
+  const seenPropertiesFinal = new Set<string>();
+  
+  // Iterate from last level to first (bottom-up)
+  for (let i = finalHierarchy.length - 1; i >= 0; i--) {
+    const level = finalHierarchy[i];
+    
+    // CRITICAL: Add Record ID and Record Name to seen properties
+    if (level.recordId) seenPropertiesFinal.add(level.recordId);
+    if (level.recordName) seenPropertiesFinal.add(level.recordName);
+    
+    // Remove properties that were already seen in lower levels
+    level.headers = level.headers.filter(h => {
+      if (seenPropertiesFinal.has(h)) {
+        console.log(`🔍 DEBUG - [Post-consolidation] Removing duplicate "${h}" from level ${i + 1}`);
+        return false;
+      }
+      seenPropertiesFinal.add(h);
+      return true;
+    });
+  }
+  
+  // Renumber levels after consolidation
+  finalHierarchy.forEach((level, index) => {
+    level.level = index + 1;
+    // Update name for last level
+    if (index === finalHierarchy.length - 1) {
+      level.name = 'SKU-Level Properties';
+    }
+  });
+  
+  console.log('🔍 DEBUG - Final hierarchy levels:', finalHierarchy.length);
+  
+  // Count ALL unique properties (headers + Record IDs + Record Names)
+  const allInHierarchy = new Set<string>();
+  finalHierarchy.forEach(level => {
+    level.headers.forEach(h => allInHierarchy.add(h));
+    if (level.recordId) allInHierarchy.add(level.recordId);
+    if (level.recordName) allInHierarchy.add(level.recordName);
+  });
+  
+  const totalInHierarchy = finalHierarchy.reduce((sum, level) => sum + level.headers.length, 0);
+  const totalRecordIds = finalHierarchy.filter(l => l.recordId).length;
+  const totalRecordNames = finalHierarchy.filter(l => l.recordName).length;
+  
+  console.log('🔍 DEBUG - Total headers in hierarchy (properties only):', totalInHierarchy);
+  console.log('🔍 DEBUG - Total Record IDs:', totalRecordIds);
+  console.log('🔍 DEBUG - Total Record Names:', totalRecordNames);
+  console.log('🔍 DEBUG - Total UNIQUE properties (including Record ID/Name):', allInHierarchy.size);
+  console.log('🔍 DEBUG - Original headers count:', headers.length);
+  console.log('🔍 DEBUG - Properties without values:', propertiesWithoutValues.length);
+  
+  if (allInHierarchy.size !== headers.length) {
+    const diff = headers.length - allInHierarchy.size;
+    console.error(`❌ CRITICAL ERROR - ${Math.abs(diff)} properties ${diff > 0 ? 'MISSING' : 'DUPLICATED'}!`);
+    
+    if (diff > 0) {
+      const missing = headers.filter(h => !allInHierarchy.has(h));
+      console.error('❌ Missing properties:', missing);
+    } else {
+      // Find duplicates
+      const headerCounts = new Map<string, number>();
+      finalHierarchy.forEach(level => {
+        level.headers.forEach(h => {
+          headerCounts.set(h, (headerCounts.get(h) || 0) + 1);
+        });
+        if (level.recordId) headerCounts.set(level.recordId, (headerCounts.get(level.recordId) || 0) + 1);
+        if (level.recordName) headerCounts.set(level.recordName, (headerCounts.get(level.recordName) || 0) + 1);
+      });
+      
+      const duplicates = Array.from(headerCounts.entries())
+        .filter(([_, count]) => count > 1)
+        .map(([header, count]) => `${header} (${count}x)`);
+      
+      console.error('❌ Duplicated properties:', duplicates);
+    }
+  } else {
+    console.log('✅ SUCCESS - All properties accounted for!');
+  }
+  
+  // DETAILED BREAKDOWN
+  console.log('\n📊 DETAILED PROPERTY BREAKDOWN:');
+  finalHierarchy.forEach((level, index) => {
+    console.log(`  Level ${index + 1} (${level.name}):`);
+    console.log(`    - Properties in list: ${level.headers.length}`);
+    console.log(`    - Record ID: ${level.recordId || 'none'}`);
+    console.log(`    - Record Name: ${level.recordName || 'none'}`);
+    console.log(`    - Total for this level: ${level.headers.length + (level.recordId ? 1 : 0) + (level.recordName ? 1 : 0)}`);
+  });
 
-  return { hierarchy: consolidatedHierarchy, properties, confidence, propertiesWithoutValues };
+  return { hierarchy: finalHierarchy, properties, confidence, propertiesWithoutValues };
 };
 
 const generateAlternativeHierarchies = (
@@ -643,10 +1277,11 @@ const generateAlternativeHierarchies = (
   const alternatives: HierarchyAlternative[] = [];
   const sortedScores = [...cardinalityScores].sort((a, b) => a.cardinality - b.cardinality);
   
-  const lowHeaders = sortedScores.filter(s => s.classification === 'low').map(s => s.header);
-  const mediumHeaders = sortedScores.filter(s => s.classification === 'medium').map(s => s.header);
-  const highHeaders = sortedScores.filter(s => s.classification === 'high').map(s => s.header);
-  const combinedHeaders = [...lowHeaders, ...mediumHeaders];
+  const level1Headers = sortedScores.filter(s => s.classification === 'level1').map(s => s.header);
+  const level2Headers = sortedScores.filter(s => s.classification === 'level2').map(s => s.header);
+  const level3Headers = sortedScores.filter(s => s.classification === 'level3').map(s => s.header);
+  const level4Headers = sortedScores.filter(s => s.classification === 'level4').map(s => s.header);
+  const combinedHeaders = [...level1Headers, ...level2Headers, ...level3Headers];
 
   // Alternative 1: Standalone Model (no hierarchy)
   alternatives.push({
@@ -663,7 +1298,7 @@ const generateAlternativeHierarchies = (
     const hierarchy: HierarchyLevel[] = [
       { level: 1, name: 'Single Category', headers: combinedHeaders.slice(0, 1), recordId: combinedHeaders[0] },
     ];
-    const properties = [...combinedHeaders.slice(1), ...highHeaders];
+    const properties = [...combinedHeaders.slice(1), ...level4Headers];
     
     alternatives.push({
       name: 'Flat Model (1 Level)',
@@ -681,7 +1316,7 @@ const generateAlternativeHierarchies = (
       { level: 1, name: 'Main Category', headers: combinedHeaders.slice(0, 1), recordId: combinedHeaders[0] },
       { level: 2, name: 'Subcategory', headers: combinedHeaders.slice(1, 2), recordId: combinedHeaders[1] },
     ];
-    const properties = [...combinedHeaders.slice(2), ...highHeaders];
+    const properties = [...combinedHeaders.slice(2), ...level4Headers];
     
     alternatives.push({
       name: '2-Level Hierarchy',
@@ -700,7 +1335,7 @@ const generateAlternativeHierarchies = (
       { level: 2, name: 'Subcategory', headers: [combinedHeaders[1]], recordId: combinedHeaders[1] },
       { level: 3, name: 'Detailed Category', headers: [combinedHeaders[2]], recordId: combinedHeaders[2] },
     ];
-    const properties = [...combinedHeaders.slice(3), ...highHeaders];
+    const properties = [...combinedHeaders.slice(3), ...level4Headers];
     
     alternatives.push({
       name: '3-Level Hierarchy',
@@ -720,7 +1355,7 @@ const generateAlternativeHierarchies = (
       { level: 3, name: 'Detailed Category', headers: [combinedHeaders[2]], recordId: combinedHeaders[2] },
       { level: 4, name: 'Specification', headers: [combinedHeaders[3]], recordId: combinedHeaders[3] },
     ];
-    const properties = [...combinedHeaders.slice(4), ...highHeaders];
+    const properties = [...combinedHeaders.slice(4), ...level4Headers];
     
     alternatives.push({
       name: '4-Level Hierarchy',
@@ -815,6 +1450,121 @@ const detectMixedModel = (
     standalonePercentage,
     hierarchicalPercentage,
   };
+};
+
+const generateRecordIdNameSuggestions = (
+  hierarchy: HierarchyLevel[],
+  headers: string[],
+  data: any[][]
+): RecordIdNameSuggestion[] => {
+  const suggestions: RecordIdNameSuggestion[] = [];
+  
+  // Helper: Score headers for Record ID suitability
+  const scoreRecordId = (header: string): number => {
+    const lower = header.toLowerCase().trim();
+    let score = 0;
+    
+    // Simple codes (L1, L2) = highest score
+    if (/^l\d+$/i.test(lower)) score += 100;
+    
+    // Numeric codes (1-6 digits)
+    else if (/^\d{1,6}$/.test(header.trim())) score += 90;
+    
+    // Short alphanumeric (2-6 chars)
+    else if (header.trim().length >= 2 && header.trim().length <= 6 && /^[a-z0-9_-]+$/i.test(header.trim())) score += 80;
+    
+    // Contains "id", "code", "key"
+    else if (lower.includes('id') || lower.includes('code') || lower.includes('key')) score += 70;
+    
+    // Longer descriptive IDs
+    else if (lower.includes('identifier') || lower.includes('number')) score += 60;
+    
+    // Penalize dates and logistics
+    if (lower.includes('date') || lower.includes('time') || lower.includes('pack') || lower.includes('unit')) score -= 50;
+    
+    return score;
+  };
+  
+  // Helper: Score headers for Record Name suitability (UNIFIED with findRecordIdAndName)
+  const scoreRecordName = (header: string, recordId?: string): number => {
+    if (recordId && header === recordId) return -1000; // Never same as Record ID
+    
+    const lower = header.toLowerCase();
+    let score = 0;
+    
+    // PRIORITY 1: "name" fields (HIGHEST)
+    if (lower.includes('name') && !lower.includes('code')) score += 100;
+    
+    // PRIORITY 2: "description" fields
+    else if (lower.includes('description')) score += 90;
+    
+    // PRIORITY 3: "brand" fields
+    else if (lower.includes('brand')) score += 80;
+    
+    // PRIORITY 4: Other name-like fields
+    else if (lower.includes('title') || lower.includes('label') || lower.includes('text')) score += 70;
+    
+    // CRITICAL: EXCLUDE logistics, UoM, dates, and technical fields (SAME as findRecordIdAndName)
+    const excludeKeywords = [
+      // Logistics
+      'pack type', 'packing type', 'packaging type', 'pack size',
+      'pallet', 'pal', 'car', 'lay', 'cs', 'cv', 'truck',
+      // UoM
+      'unit', 'uom', 'measure', 'weight', 'volume', 'liter', 'litre',
+      // IDs and codes
+      'id', 'code', 'number', 'sku', 'ean', 'gtin', 'upc', 'barcode',
+      // Technical/dates
+      'supervisor', 'family', 'hierarchy', 'date', 'time', 'created', 'valid'
+    ];
+    
+    if (excludeKeywords.some(kw => lower.includes(kw))) {
+      score -= 200; // HEAVY penalty (SAME as findRecordIdAndName)
+    }
+    
+    return score;
+  };
+  
+  hierarchy.forEach((level) => {
+    // CRITICAL: Use the ALREADY SELECTED Record ID/Name as the PRIMARY source
+    // Only show alternatives from the SAME level's headers
+    const levelHeaders = [...level.headers];
+    
+    // Score and sort ID candidates (from level headers only)
+    const idCandidates = levelHeaders
+      .map(h => ({ header: h, score: scoreRecordId(h) }))
+      .filter(c => c.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(c => c.header);
+    
+    // Score and sort Name candidates (from level headers only)
+    const nameCandidates = levelHeaders
+      .map(h => ({ header: h, score: scoreRecordName(h) }))
+      .filter(c => c.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(c => c.header);
+    
+    // ALWAYS put the selected Record ID/Name FIRST in the candidates list
+    const finalIdCandidates = level.recordId 
+      ? [level.recordId, ...idCandidates.filter(c => c !== level.recordId)].slice(0, 3)
+      : idCandidates;
+    
+    const finalNameCandidates = level.recordName
+      ? [level.recordName, ...nameCandidates.filter(c => c !== level.recordName)].slice(0, 3)
+      : nameCandidates;
+    
+    suggestions.push({
+      level: level.level,
+      levelName: level.name,
+      recordIdCandidates: finalIdCandidates.length > 0 ? finalIdCandidates : [level.recordId],
+      recordNameCandidates: finalNameCandidates.length > 0 ? finalNameCandidates : level.recordName ? [level.recordName] : [],
+      selectedRecordId: level.recordId,
+      selectedRecordName: level.recordName,
+    });
+  });
+  
+  return suggestions;
 };
 
 const detectOrphanedRecords = (

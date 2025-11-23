@@ -32,14 +32,25 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
     }
   };
 
-  const getLevelColor = (level: number) => {
+  const getLevelColor = (level: number, totalLevels: number) => {
+    // Match colors from Data Pattern Analysis
+    // If it's the last level, it's always SKU (red)
+    if (level === totalLevels) {
+      return 'bg-red-500 text-white';
+    }
+    
+    // Otherwise, map to the 4-level color scheme
     switch (level) {
       case 1:
-        return 'bg-primary text-primary-foreground';
+        return 'bg-blue-500 text-white'; // Level 1: Parent
       case 2:
-        return 'bg-accent text-accent-foreground';
+        return 'bg-green-500 text-white'; // Level 2: Children
+      case 3:
+        return 'bg-yellow-500 text-white'; // Level 3: Grandchildren
+      case 4:
+        return 'bg-orange-500 text-white'; // Level 4: Variant
       default:
-        return 'bg-secondary text-secondary-foreground';
+        return 'bg-gray-500 text-white';
     }
   };
 
@@ -55,10 +66,24 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
             className="cursor-pointer"
             onClick={() => setIsExpanded(!isExpanded)}
           >
-            <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
-              {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
-              Proposed Product Hierarchy
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-semibold flex items-center gap-2">
+                {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
+                Proposed Product Hierarchy
+              </h2>
+              <Badge variant="secondary" className="text-lg px-4 py-1">
+                {(() => {
+                  // Count ALL unique properties (headers + Record IDs + Record Names)
+                  const allProps = new Set<string>();
+                  hierarchy.forEach(level => {
+                    level.headers.forEach(h => allProps.add(h));
+                    if (level.recordId) allProps.add(level.recordId);
+                    if (level.recordName) allProps.add(level.recordName);
+                  });
+                  return allProps.size;
+                })()} properties
+              </Badge>
+            </div>
             <p className="text-muted-foreground">
               Data inheritance structure based on cardinality analysis
             </p>
@@ -81,7 +106,7 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
                     </div>
                   )}
                   
-                  <Card className={`flex-1 p-5 ${getLevelColor(level.level)} border-none`}>
+                  <Card className={`flex-1 p-5 ${getLevelColor(level.level, hierarchy.length)} border-none`}>
                     <div className="flex items-center gap-3 mb-3">
                       {getLevelIcon(level.level)}
                       <h3 className="font-semibold text-lg">

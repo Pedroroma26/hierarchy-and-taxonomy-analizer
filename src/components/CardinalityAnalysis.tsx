@@ -10,23 +10,32 @@ export interface CardinalityScore {
   uniqueCount: number;
   totalCount: number;
   cardinality: number;
-  classification: 'high' | 'medium' | 'low';
+  classification: 'level1' | 'level2' | 'level3' | 'level4';
 }
 
 interface CardinalityAnalysisProps {
   scores: CardinalityScore[];
+  thresholds?: {
+    parent: number;
+    childrenMin: number;
+    childrenMax: number;
+    sku: number;
+  };
 }
 
-export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
+export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  
   const getClassificationColor = (classification: string) => {
     switch (classification) {
-      case 'high':
-        return 'bg-secondary text-secondary-foreground';
-      case 'medium':
-        return 'bg-accent text-accent-foreground';
-      case 'low':
-        return 'bg-primary text-primary-foreground';
+      case 'level1':
+        return 'bg-blue-500 text-white';
+      case 'level2':
+        return 'bg-green-500 text-white';
+      case 'level3':
+        return 'bg-yellow-500 text-white';
+      case 'level4':
+        return 'bg-red-500 text-white';
       default:
         return 'bg-muted text-muted-foreground';
     }
@@ -34,12 +43,14 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
 
   const getClassificationLabel = (classification: string) => {
     switch (classification) {
-      case 'high':
-        return 'High Uniqueness';
-      case 'medium':
-        return 'Medium Repetition';
-      case 'low':
-        return 'High Repetition';
+      case 'level1':
+        return 'Level 1: Parent';
+      case 'level2':
+        return 'Level 2: Children';
+      case 'level3':
+        return 'Level 3: Grandchildren';
+      case 'level4':
+        return 'Level 4: SKU';
       default:
         return 'Unknown';
     }
@@ -54,17 +65,28 @@ export const CardinalityAnalysis = ({ scores }: CardinalityAnalysisProps) => {
       <Card className="p-6 shadow-elevated">
         <div className="space-y-6">
           <div 
-            className="flex items-center justify-between cursor-pointer"
+            className="cursor-pointer"
             onClick={() => setIsExpanded(!isExpanded)}
           >
-            <div>
-              <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-2xl font-semibold flex items-center gap-2">
                 {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
                 Data Pattern Analysis
               </h2>
+              <Badge variant="secondary" className="text-sm px-3 py-1 font-semibold">
+                {scores.length} properties analyzed
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between">
               <p className="text-muted-foreground">
                 Analyzing repetition and uniqueness patterns in product attributes
               </p>
+              <div className="flex gap-2 items-center flex-wrap">
+                <Badge className="bg-blue-500 text-white text-xs px-2 py-1">Level 1: Parent</Badge>
+                <Badge className="bg-green-500 text-white text-xs px-2 py-1">Level 2: Children</Badge>
+                <Badge className="bg-yellow-500 text-white text-xs px-2 py-1">Level 3: Grandchildren</Badge>
+                <Badge className="bg-red-500 text-white text-xs px-2 py-1">Level 4: SKU</Badge>
+              </div>
             </div>
           </div>
 
