@@ -10,6 +10,7 @@ import { HeaderSelector } from '@/components/HeaderSelector';
 import { TaxonomyTreeVisualization } from '@/components/TaxonomyTreeVisualization';
 import { DataValidationWarnings } from '@/components/DataValidationWarnings';
 import { BestPracticesRecommendations } from '@/components/BestPracticesRecommendations';
+import { ThresholdAdjuster } from '@/components/ThresholdAdjuster';
 import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
 import { generateExportReport, buildTaxonomyTree } from '@/utils/exportReport';
 import { validateData } from '@/utils/dataValidation';
@@ -93,22 +94,33 @@ const Index = () => {
     setData(filteredData);
 
     // Perform analysis with selected headers
-    const result = analyzeProductData(selected, filteredData);
+    runAnalysis(selected, filteredData);
+  };
+
+  const runAnalysis = (headersToAnalyze: string[], dataToAnalyze: any[][], customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number }) => {
+    // Perform analysis with selected headers
+    const result = analyzeProductData(headersToAnalyze, dataToAnalyze, customThresholds);
     setAnalysisResult(result);
 
     // Build taxonomy tree
-    const tree = buildTaxonomyTree(result.hierarchy, filteredData, selected);
+    const tree = buildTaxonomyTree(result.hierarchy, dataToAnalyze, headersToAnalyze);
     setTaxonomyTree(tree);
 
     // Validate data quality
     const hierarchyHeaders = result.hierarchy.flatMap(h => h.headers);
-    const validation = validateData(selected, filteredData, hierarchyHeaders);
+    const validation = validateData(headersToAnalyze, dataToAnalyze, hierarchyHeaders);
     setValidationResult(validation);
 
     toast({
       title: 'Analysis Complete',
-      description: `Analyzed ${selected.length} attributes from ${filteredData.length} products.`,
+      description: `Analyzed ${headersToAnalyze.length} attributes from ${dataToAnalyze.length} products.`,
     });
+  };
+
+  const handleThresholdsChange = (newThresholds: { parent: number; childrenMin: number; childrenMax: number; sku: number }) => {
+    if (headers.length > 0 && data.length > 0) {
+      runAnalysis(headers, data, newThresholds);
+    }
   };
 
   const handleExportJSON = () => {
@@ -214,6 +226,12 @@ const Index = () => {
                 <>
                   {/* Data Pattern Analysis - CORE for hierarchy decisions */}
                   <CardinalityAnalysis scores={analysisResult.cardinalityScores} />
+                  
+                  {/* Threshold Adjuster - Interactive tuning */}
+                  <ThresholdAdjuster 
+                    currentThresholds={analysisResult.thresholds}
+                    onThresholdsChange={handleThresholdsChange}
+                  />
                   
                   {/* Main Hierarchy Proposal */}
                   <HierarchyProposal
