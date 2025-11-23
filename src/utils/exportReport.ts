@@ -446,9 +446,11 @@ export const generateExportReport = (
     })),
 
     analysis_thresholds: {
-      low_cardinality_threshold: (analysisResult.thresholds.low * 100).toFixed(0) + '%',
-      medium_cardinality_threshold: (analysisResult.thresholds.medium * 100).toFixed(0) + '%',
-      description: 'Thresholds used to classify properties as hierarchy levels vs product attributes',
+      parent_level_threshold: (analysisResult.thresholds.parent * 100).toFixed(1) + '%',
+      children_min_threshold: (analysisResult.thresholds.childrenMin * 100).toFixed(0) + '%',
+      children_max_threshold: (analysisResult.thresholds.childrenMax * 100).toFixed(0) + '%',
+      sku_level_threshold: (analysisResult.thresholds.sku * 100).toFixed(0) + '%',
+      description: '4-level cardinality thresholds: Parent (≤2%), Children (50-75%), SKU (≥98%)',
     },
   };
 };

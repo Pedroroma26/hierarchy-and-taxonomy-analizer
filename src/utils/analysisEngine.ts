@@ -62,28 +62,34 @@ export interface AnalysisResult {
   alternativeHierarchies: HierarchyAlternative[];
   orphanedRecords: OrphanedRecord[];
   thresholds: {
-    low: number;
-    medium: number;
+    parent: number;
+    childrenMin: number;
+    childrenMax: number;
+    sku: number;
   };
 }
 
-// Thresholds for classification
-export let LOW_CARDINALITY_THRESHOLD = 0.1; // High repetition (10% unique)
-export let MEDIUM_CARDINALITY_THRESHOLD = 0.5; // Medium repetition (50% unique)
+// Thresholds for 4-level cardinality classification
+export let PARENT_THRESHOLD = 0.02; // ≤2% unique = Parent (Level 1)
+export let CHILDREN_THRESHOLD_MIN = 0.50; // 50% unique = Children start (Level 2)
+export let CHILDREN_THRESHOLD_MAX = 0.75; // 75% unique = Children end (Level 3)
+export let SKU_THRESHOLD = 0.98; // ≥98% unique = SKU/Attribute (Level 4)
 
-export const updateThresholds = (low: number, medium: number) => {
-  LOW_CARDINALITY_THRESHOLD = low;
-  MEDIUM_CARDINALITY_THRESHOLD = medium;
+export const updateThresholds = (parent: number, childrenMin: number, childrenMax: number, sku: number) => {
+  PARENT_THRESHOLD = parent;
+  CHILDREN_THRESHOLD_MIN = childrenMin;
+  CHILDREN_THRESHOLD_MAX = childrenMax;
+  SKU_THRESHOLD = sku;
 };
 
 export const analyzeProductData = (
   headers: string[],
   data: any[][],
-  customThresholds?: { low: number; medium: number }
+  customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number }
 ): AnalysisResult => {
   // Use custom thresholds if provided
   if (customThresholds) {
-    updateThresholds(customThresholds.low, customThresholds.medium);
+    updateThresholds(customThresholds.parent, customThresholds.childrenMin, customThresholds.childrenMax, customThresholds.sku);
   }
 
   // Detect product domain
@@ -92,12 +98,16 @@ export const analyzeProductData = (
   // Calculate cardinality scores
   const cardinalityScores = calculateCardinalityScores(headers, data);
 
-  // Determine hierarchy based on cardinality
+  // Auto-detect UoM/logistics headers
+  const autoExcludedHeaders = headers.filter(h => detectUomAndLogistics(h));
+
+  // Determine hierarchy based on cardinality (excluding UoM/logistics)
   const { hierarchy, properties, confidence, propertiesWithoutValues } = determineHierarchy(
     cardinalityScores, 
     headers, 
     productDomain,
-    data
+    data,
+    autoExcludedHeaders
   );
 
   // Generate alternative hierarchies
@@ -138,8 +148,10 @@ export const analyzeProductData = (
     alternativeHierarchies,
     orphanedRecords,
     thresholds: {
-      low: LOW_CARDINALITY_THRESHOLD,
-      medium: MEDIUM_CARDINALITY_THRESHOLD,
+      parent: PARENT_THRESHOLD,
+      childrenMin: CHILDREN_THRESHOLD_MIN,
+      childrenMax: CHILDREN_THRESHOLD_MAX,
+      sku: SKU_THRESHOLD,
     },
   };
 };
@@ -155,13 +167,14 @@ const calculateCardinalityScores = (
     const totalCount = columnData.filter((val) => val !== null && val !== undefined && val !== '').length;
     const cardinality = totalCount > 0 ? uniqueCount / totalCount : 0;
 
+    // 4-level classification based on new thresholds
     let classification: 'high' | 'medium' | 'low';
-    if (cardinality >= MEDIUM_CARDINALITY_THRESHOLD) {
-      classification = 'high';
-    } else if (cardinality >= LOW_CARDINALITY_THRESHOLD) {
-      classification = 'medium';
+    if (cardinality >= SKU_THRESHOLD) {
+      classification = 'high'; // SKU/Attribute level (≥98%)
+    } else if (cardinality >= CHILDREN_THRESHOLD_MIN) {
+      classification = 'medium'; // Children/Grandchildren (50%-75%)
     } else {
-      classification = 'low';
+      classification = 'low'; // Parent level (≤2%)
     }
 
     return {
@@ -255,25 +268,31 @@ const isLikelyRecordName = (header: string): boolean => {
   return nameKeywords.some(kw => lower.includes(kw)) && !lower.includes('id') && !lower.includes('code');
 };
 
+// Helper: Detect UoM and logistics headers
+export const detectUomAndLogistics = (header: string): boolean => {
+  const headerLower = header.toLowerCase();
+  const keywords = [
+    'uom', 'unit', 'measure', 'measurement', 'dimension',
+    'weight', 'height', 'width', 'depth', 'length',
+    'zuc', 'zun', 'numerator', 'denominator',
+    'price', 'cost', 'value', 'currency',
+    'pallet', 'package', 'packaging', 'logistics',
+    'quantity', 'qty', 'stock', 'inventory'
+  ];
+  return keywords.some(kw => headerLower.includes(kw));
+};
+
 const determineHierarchy = (
   cardinalityScores: CardinalityScore[],
   headers: string[],
   productDomain: ProductDomain,
-  data: any[][]
+  data: any[][],
+  excludedHeaders: string[] = []
 ): { hierarchy: HierarchyLevel[]; properties: string[]; confidence: number; propertiesWithoutValues: string[] } => {
-  // CRITICAL: Exclude measurement and unit fields from hierarchy detection
-  const EXCLUDE_FROM_HIERARCHY = [
-    'uom', 'unit', 'measure', 'measurement', 'dimension',
-    'weight', 'height', 'width', 'depth', 'length', 'size',
-    'zuc', 'zun', 'numerator', 'denominator',
-    'date', 'time', 'created', 'modified', 'valid', 'expiry'
-  ];
-
-  // Filter out measurement fields
-  const validScores = cardinalityScores.filter(score => {
-    const headerLower = score.header.toLowerCase();
-    return !EXCLUDE_FROM_HIERARCHY.some(kw => headerLower.includes(kw));
-  });
+  // Filter out excluded headers (UoM/logistics by default, can be overridden)
+  const validScores = cardinalityScores.filter(score => 
+    !excludedHeaders.includes(score.header)
+  );
 
   const validHeaders = validScores.map(s => s.header);
 
@@ -285,18 +304,27 @@ const determineHierarchy = (
     (a, b) => a.cardinality - b.cardinality
   );
 
-  // Classify headers by cardinality
-  const lowCardinalityHeaders = sortedScores
-    .filter((score) => score.classification === 'low')
+  // Classify headers into 4 cardinality levels
+  const parentHeaders = sortedScores
+    .filter((score) => score.cardinality <= PARENT_THRESHOLD)
     .map((score) => score.header);
 
-  const mediumCardinalityHeaders = sortedScores
-    .filter((score) => score.classification === 'medium')
+  const childrenHeaders = sortedScores
+    .filter((score) => score.cardinality > PARENT_THRESHOLD && score.cardinality < CHILDREN_THRESHOLD_MAX)
     .map((score) => score.header);
 
-  const highCardinalityHeaders = sortedScores
-    .filter((score) => score.classification === 'high')
+  const grandchildrenHeaders = sortedScores
+    .filter((score) => score.cardinality >= CHILDREN_THRESHOLD_MAX && score.cardinality < SKU_THRESHOLD)
     .map((score) => score.header);
+
+  const skuHeaders = sortedScores
+    .filter((score) => score.cardinality >= SKU_THRESHOLD)
+    .map((score) => score.header);
+
+  // Legacy variables for backward compatibility
+  const lowCardinalityHeaders = parentHeaders;
+  const mediumCardinalityHeaders = [...childrenHeaders, ...grandchildrenHeaders];
+  const highCardinalityHeaders = skuHeaders;
 
   // Determine if we have enough structure for a hierarchy
   const totalLowMedium = lowCardinalityHeaders.length + mediumCardinalityHeaders.length;
@@ -523,9 +551,9 @@ const determineHierarchy = (
     return nonEmptyCount / data.length >= 0.1; // At least 10% filled
   };
 
-  // CRITICAL: Consolidate levels with < 5 properties into lower level
-  // This ensures well-defined hierarchies
-  const MIN_PROPERTIES_PER_LEVEL = 5;
+  // DYNAMIC HIERARCHY OPTIMIZATION (Aggregation Rule)
+  // Rule: If a level results in fewer than 5 unique values under its parent, merge with next level
+  const MIN_UNIQUE_VALUES_PER_LEVEL = 5;
   const consolidatedHierarchy: typeof hierarchy = [];
   
   for (let i = 0; i < hierarchy.length; i++) {
@@ -537,8 +565,16 @@ const determineHierarchy = (
       continue;
     }
     
-    // If level has < 5 properties, merge with next level
-    if (level.headers.length < MIN_PROPERTIES_PER_LEVEL && i < hierarchy.length - 1) {
+    // Count unique values for this level in the data
+    const levelHeaderIndices = level.headers.map(h => headers.indexOf(h));
+    const uniqueCombinations = new Set();
+    data.forEach(row => {
+      const combo = levelHeaderIndices.map(idx => row[idx]).join('|');
+      if (combo.trim()) uniqueCombinations.add(combo);
+    });
+    
+    // If level produces < 5 unique nodes, merge with next level
+    if (uniqueCombinations.size < MIN_UNIQUE_VALUES_PER_LEVEL && i < hierarchy.length - 1) {
       const nextLevel = hierarchy[i + 1];
       nextLevel.headers = [...level.headers, ...nextLevel.headers];
       nextLevel.level = level.level; // Keep current level number
@@ -579,15 +615,19 @@ const determineHierarchy = (
     lastLevel.headers = headersWithValues;
   }
 
-  // Add excluded measurement fields to SKU-level (last level)
-  const excludedFields = headers.filter(h => !validHeaders.includes(h));
-  if (consolidatedHierarchy.length > 0) {
+  // Add excluded UoM/logistics fields to SKU-level (last level)
+  const excludedFields = excludedHeaders.filter(h => headers.includes(h));
+  if (consolidatedHierarchy.length > 0 && excludedFields.length > 0) {
     const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
     excludedFields.forEach(field => {
       if (hasValues(field, data)) {
-        lastLevel.headers.push(field);
+        if (!lastLevel.headers.includes(field)) {
+          lastLevel.headers.push(field);
+        }
       } else {
-        propertiesWithoutValues.push(field);
+        if (!propertiesWithoutValues.includes(field)) {
+          propertiesWithoutValues.push(field);
+        }
       }
     });
   }

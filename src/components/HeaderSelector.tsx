@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { CheckCircle2, XCircle, Play } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { CheckCircle2, XCircle, Play, Info, AlertCircle } from 'lucide-react';
+import { detectUomAndLogistics } from '@/utils/analysisEngine';
 
 interface HeaderSelectorProps {
   headers: string[];
@@ -14,11 +16,17 @@ interface HeaderSelectorProps {
 }
 
 export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps) => {
-  // All headers selected by default
+  // Detect UoM/logistics headers
+  const uomHeaders = useMemo(() => {
+    return headers.filter(h => detectUomAndLogistics(h));
+  }, [headers]);
+
+  // Non-UoM headers selected by default, UoM headers deselected
   const [selectedHeaders, setSelectedHeaders] = useState<Set<string>>(
-    new Set(headers)
+    new Set(headers.filter(h => !uomHeaders.includes(h)))
   );
   const [hoveredHeader, setHoveredHeader] = useState<string | null>(null);
+  const [showUomInfo, setShowUomInfo] = useState(uomHeaders.length > 0);
 
   const toggleHeader = (header: string) => {
     const newSelected = new Set(selectedHeaders);
@@ -36,6 +44,13 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
 
   const deselectAll = () => {
     setSelectedHeaders(new Set());
+  };
+
+  const enableUomHeaders = () => {
+    const newSelected = new Set(selectedHeaders);
+    uomHeaders.forEach(h => newSelected.add(h));
+    setSelectedHeaders(newSelected);
+    setShowUomInfo(false);
   };
 
   const handleConfirm = () => {
@@ -72,6 +87,41 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
               </p>
             </div>
 
+            {showUomInfo && uomHeaders.length > 0 && (
+              <Alert className="bg-muted/50 border-primary/20">
+                <Info className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  <div className="space-y-2">
+                    <p className="font-medium">
+                      {uomHeaders.length} UoM/logistics propert{uomHeaders.length === 1 ? 'y' : 'ies'} detected and disabled by default
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Properties related to units of measure, quantities, and logistics are automatically 
+                      assigned to SKU-level and excluded from hierarchy analysis. You can enable them if needed.
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={enableUomHeaders}
+                        className="gap-1"
+                      >
+                        <CheckCircle2 className="w-3 h-3" />
+                        Enable UoM Properties
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowUomInfo(false)}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -95,29 +145,37 @@ export const HeaderSelector = ({ headers, data, onConfirm }: HeaderSelectorProps
 
             <ScrollArea className="h-[500px] rounded-lg border p-4">
               <div className="space-y-2">
-                {headers.map((header, index) => (
-                  <motion.div
-                    key={header}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.02 }}
-                    className="flex items-center space-x-3 p-3 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                    onMouseEnter={() => setHoveredHeader(header)}
-                    onMouseLeave={() => setHoveredHeader(null)}
-                  >
-                    <Checkbox
-                      id={`header-${index}`}
-                      checked={selectedHeaders.has(header)}
-                      onCheckedChange={() => toggleHeader(header)}
-                    />
-                    <label
-                      htmlFor={`header-${index}`}
-                      className="flex-1 text-sm font-medium cursor-pointer"
+                {headers.map((header, index) => {
+                  const isUom = uomHeaders.includes(header);
+                  return (
+                    <motion.div
+                      key={header}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.02 }}
+                      className="flex items-center space-x-3 p-3 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                      onMouseEnter={() => setHoveredHeader(header)}
+                      onMouseLeave={() => setHoveredHeader(null)}
                     >
-                      {header}
-                    </label>
-                  </motion.div>
-                ))}
+                      <Checkbox
+                        id={`header-${index}`}
+                        checked={selectedHeaders.has(header)}
+                        onCheckedChange={() => toggleHeader(header)}
+                      />
+                      <label
+                        htmlFor={`header-${index}`}
+                        className="flex-1 text-sm font-medium cursor-pointer flex items-center gap-2"
+                      >
+                        {header}
+                        {isUom && (
+                          <Badge variant="outline" className="text-xs">
+                            UoM
+                          </Badge>
+                        )}
+                      </label>
+                    </motion.div>
+                  );
+                })}
               </div>
             </ScrollArea>
 
