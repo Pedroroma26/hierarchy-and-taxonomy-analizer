@@ -142,6 +142,23 @@ export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationPro
 
           {isExpanded && (
           <>
+          {/* Taxonomy Properties Legend */}
+          {tree.taxonomyProperties && tree.taxonomyProperties.length > 0 && (
+            <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
+              <div className="text-sm font-semibold text-primary mb-3">Taxonomy Structure (Properties per Level)</div>
+              <div className="flex flex-wrap gap-2">
+                {tree.taxonomyProperties.map((prop, index) => (
+                  <div key={prop} className="flex items-center gap-2 bg-background px-3 py-1.5 rounded-full border">
+                    <Badge variant="outline" className="text-xs font-bold">
+                      L{index + 1}
+                    </Badge>
+                    <span className="text-sm font-medium">{prop}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Statistics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-4 rounded-lg bg-muted/50">

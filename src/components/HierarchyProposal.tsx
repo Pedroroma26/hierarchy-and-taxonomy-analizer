@@ -3,14 +3,7 @@ import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ChevronRight, ChevronDown, Database, Layers, Tag } from 'lucide-react';
-
-export interface HierarchyLevel {
-  level: number;
-  name: string;
-  headers: string[];
-  recordId: string; // MANDATORY - Record ID field for this level
-  recordName?: string; // Suggested Record Name field for this level
-}
+import { HierarchyLevel } from '@/types';
 
 interface HierarchyProposalProps {
   hierarchy: HierarchyLevel[];

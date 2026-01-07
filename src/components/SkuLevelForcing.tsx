@@ -7,14 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChevronDown, ChevronRight, Package, Ruler, Truck, Salad, Settings, Tag, RefreshCw } from 'lucide-react';
 import { detectUomAndLogistics } from '@/utils/analysisEngine';
-
-interface HierarchyLevel {
-  level: number;
-  name: string;
-  headers: string[];
-  recordId?: string;
-  recordName?: string;
-}
+import { HierarchyLevel } from '@/types';
 
 interface SkuLevelForcingProps {
   headers: string[];

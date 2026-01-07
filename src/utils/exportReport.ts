@@ -1,16 +1,12 @@
 import { AnalysisResult } from './analysisEngine';
-
-export interface HierarchyLevel {
-  level: number;
-  name: string;
-  headers: string[];
-}
+import { HierarchyLevel } from '@/types';
 
 export interface TaxonomyTreeNode {
   name: string;
   level: number;
   children: TaxonomyTreeNode[];
   productCount: number;
+  taxonomyProperties?: string[]; // Properties used for each level (only on root)
 }
 
 export interface PropertyHierarchyMapping {
@@ -113,6 +109,7 @@ export const buildTaxonomyTree = (
       level: 0,
       children: [],
       productCount: data.length,
+      taxonomyProperties: [],
     };
   }
 
@@ -121,6 +118,7 @@ export const buildTaxonomyTree = (
     level: 0,
     children: [],
     productCount: data.length,
+    taxonomyProperties: sortedHeaders, // Store which properties compose the taxonomy
   };
 
   // Build tree structure using sorted headers (text-based first)
@@ -143,6 +141,98 @@ export const buildTaxonomyTree = (
       const valueName = String(value).trim();
       
       // Also skip if value is literally "Unknown" or "unknown" (unless it's real data)
+      const lowerValue = valueName.toLowerCase();
+      if (lowerValue === 'unknown' || lowerValue === 'n/a' || lowerValue === 'null' || lowerValue === 'undefined') {
+        skipRow = true;
+        return;
+      }
+
+      // Find or create child node
+      let childNode = currentNode.children.find(child => child.name === valueName);
+      
+      if (!childNode) {
+        childNode = {
+          name: valueName,
+          level: levelIndex + 1,
+          children: [],
+          productCount: 0,
+        };
+        currentNode.children.push(childNode);
+      }
+
+      childNode.productCount++;
+      currentNode = childNode;
+    });
+  });
+
+  // Sort children by product count (descending)
+  const sortTree = (node: TaxonomyTreeNode) => {
+    node.children.sort((a, b) => b.productCount - a.productCount);
+    node.children.forEach(sortTree);
+  };
+  sortTree(root);
+
+  return root;
+};
+
+export interface CustomTaxonomyLevel {
+  id: string;
+  property: string;
+}
+
+export interface CustomTaxonomyConfig {
+  levels: CustomTaxonomyLevel[];
+}
+
+/**
+ * Build a custom taxonomy tree based on user configuration
+ */
+export const buildCustomTaxonomyTree = (
+  config: CustomTaxonomyConfig,
+  data: any[][],
+  headers: string[]
+): TaxonomyTreeNode => {
+  if (config.levels.length === 0) {
+    return {
+      name: 'Root',
+      level: 0,
+      children: [],
+      productCount: data.length,
+    };
+  }
+
+  const root: TaxonomyTreeNode = {
+    name: 'Root',
+    level: 0,
+    children: [],
+    productCount: data.length,
+  };
+
+  // Build tree structure using custom configuration
+  data.forEach((row) => {
+    let currentNode = root;
+    let skipRow = false;
+
+    config.levels.forEach((levelConfig, levelIndex) => {
+      if (skipRow) return;
+      
+      const headerIndex = headers.indexOf(levelConfig.property);
+      if (headerIndex === -1) {
+        skipRow = true;
+        return;
+      }
+      
+      const value = row[headerIndex];
+      
+      // Skip rows with missing/empty values
+      if (value === null || value === undefined || value === '' || String(value).trim() === '') {
+        skipRow = true;
+        return;
+      }
+      
+      const valueName = String(value).trim();
+      
+      // Skip common invalid values
       const lowerValue = valueName.toLowerCase();
       if (lowerValue === 'unknown' || lowerValue === 'n/a' || lowerValue === 'null' || lowerValue === 'undefined') {
         skipRow = true;

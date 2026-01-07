@@ -175,12 +175,24 @@ export const DataValidationWarnings = ({ validation }: DataValidationWarningsPro
 
                     <CollapsibleContent>
                       <div className="mt-4 space-y-3 border-t pt-3">
+                        {/* Salsify Rule Reference */}
+                        {warning.salsifyRule && (
+                          <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs bg-primary/20 text-primary border-primary/30">
+                                SALSIFY
+                              </Badge>
+                              <span className="text-xs font-medium text-primary">{warning.salsifyRule}</span>
+                            </div>
+                          </div>
+                        )}
+                        
                         {/* Suggestion */}
                         <div className="p-3 rounded-lg bg-background/50">
                           <div className="flex items-start gap-2">
                             <AlertCircle className="w-4 h-4 text-primary mt-0.5" />
                             <div>
-                              <div className="font-medium text-sm mb-1">Suggestion:</div>
+                              <div className="font-medium text-sm mb-1">Action:</div>
                               <p className="text-sm text-muted-foreground">{warning.suggestion}</p>
                             </div>
                           </div>

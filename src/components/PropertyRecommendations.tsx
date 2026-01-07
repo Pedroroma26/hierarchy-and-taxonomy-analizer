@@ -16,6 +16,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { PropertyRecommendation, UomSuggestion, RecordIdNameSuggestion } from '@/utils/analysisEngine';
+import { HierarchyLevel } from '@/types';
 
 interface PropertyRecommendationsProps {
   recordIdSuggestion: string | null;
@@ -23,6 +24,7 @@ interface PropertyRecommendationsProps {
   recordIdNameSuggestions: RecordIdNameSuggestion[];
   propertyRecommendations: PropertyRecommendation[];
   uomSuggestions: UomSuggestion[];
+  hierarchy: HierarchyLevel[];
 }
 
 export const PropertyRecommendations = ({
@@ -31,20 +33,38 @@ export const PropertyRecommendations = ({
   recordIdNameSuggestions,
   propertyRecommendations,
   uomSuggestions,
+  hierarchy,
 }: PropertyRecommendationsProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  
+  // CRITICAL: Build suggestions directly from hierarchy to ensure alignment
+  // This guarantees Record ID/Name match what's shown in Hierarchy Proposal
+  const filteredSuggestions = hierarchy.map((level, index) => ({
+    level: index + 1,
+    levelName: level.name,
+    recordIdCandidates: [level.recordId],
+    selectedRecordId: level.recordId,
+    recordNameCandidates: level.recordName ? [level.recordName] : [],
+    selectedRecordName: level.recordName || '',
+  }));
   const getDataTypeIcon = (type: string) => {
     switch (type) {
       case 'number':
         return <Hash className="w-4 h-4" />;
       case 'picklist':
         return <List className="w-4 h-4" />;
-      case 'url':
+      case 'date':
+        return <FileText className="w-4 h-4" />;
+      case 'yes_no':
+        return <CheckCircle className="w-4 h-4" />;
+      case 'rich_text':
+        return <FileText className="w-4 h-4" />;
+      case 'html':
+        return <Globe className="w-4 h-4" />;
+      case 'link':
         return <Globe className="w-4 h-4" />;
       case 'digital_asset':
         return <Image className="w-4 h-4" />;
-      case 'yes_no':
-        return <CheckCircle className="w-4 h-4" />;
       default:
         return <FileText className="w-4 h-4" />;
     }
@@ -55,15 +75,19 @@ export const PropertyRecommendations = ({
       case 'number':
         return 'Number';
       case 'picklist':
-        return 'Picklist';
-      case 'url':
-        return 'URL';
-      case 'digital_asset':
-        return 'Digital Asset';
+        return 'Picklist/Category';
+      case 'date':
+        return 'Date';
       case 'yes_no':
         return 'Yes/No';
+      case 'rich_text':
+        return 'Rich Text';
       case 'html':
         return 'HTML';
+      case 'link':
+        return 'Link';
+      case 'digital_asset':
+        return 'Digital Asset';
       default:
         return 'String';
     }
@@ -110,7 +134,7 @@ export const PropertyRecommendations = ({
               Record ID & Name Recommendations by Level
             </h3>
             <div className="space-y-3">
-              {recordIdNameSuggestions.map((suggestion, index) => (
+              {filteredSuggestions.map((suggestion, index) => (
                 <motion.div
                   key={suggestion.level}
                   initial={{ opacity: 0, x: -20 }}

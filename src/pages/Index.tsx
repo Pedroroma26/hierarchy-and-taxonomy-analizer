@@ -8,16 +8,17 @@ import { HierarchyProposal } from '@/components/HierarchyProposal';
 import { PropertyRecommendations } from '@/components/PropertyRecommendations';
 import { HeaderSelector } from '@/components/HeaderSelector';
 import { TaxonomyTreeVisualization } from '@/components/TaxonomyTreeVisualization';
+import { TaxonomyBuilder, TaxonomyConfig } from '@/components/TaxonomyBuilder';
 import { DataValidationWarnings } from '@/components/DataValidationWarnings';
 import { BestPracticesRecommendations } from '@/components/BestPracticesRecommendations';
-import { ThresholdAdjuster } from '@/components/ThresholdAdjuster';
+import { PresetSelector } from '@/components/PresetSelector';
 import { SkuLevelForcing } from '@/components/SkuLevelForcing';
 import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
-import { generateExportReport, buildTaxonomyTree } from '@/utils/exportReport';
+import { generateExportReport, buildTaxonomyTree, buildCustomTaxonomyTree } from '@/utils/exportReport';
 import { validateData } from '@/utils/dataValidation';
 import { generatePDFReport } from '@/utils/pdfExport';
 import { useToast } from '@/hooks/use-toast';
-import { Download, CheckCircle2, XCircle, Play, FileJson, FileText } from 'lucide-react';
+import { Download, CheckCircle2, XCircle, Play, FileText } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,8 @@ const Index = () => {
   const [taxonomyTree, setTaxonomyTree] = useState<any>(null);
   const [validationResult, setValidationResult] = useState<any>(null);
   const [forcedSkuHeaders, setForcedSkuHeaders] = useState<string[]>([]);
+  const [selectedPreset, setSelectedPreset] = useState<any>(null);
+  const [taxonomyConfig, setTaxonomyConfig] = useState<TaxonomyConfig | null>(null);
   const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
@@ -62,6 +65,29 @@ const Index = () => {
         h ? h.toString().trim() : ''
       );
       const extractedData = jsonData.slice(1);
+      
+      // Check for duplicate headers and warn user with details
+      const headerPositions = new Map<string, number[]>();
+      extractedHeaders.forEach((h, idx) => {
+        if (!headerPositions.has(h)) {
+          headerPositions.set(h, []);
+        }
+        headerPositions.get(h)!.push(idx + 1); // 1-indexed for user
+      });
+      
+      const duplicates = Array.from(headerPositions.entries()).filter(([_, positions]) => positions.length > 1);
+      if (duplicates.length > 0) {
+        const duplicateDetails = duplicates.map(([name, positions]) => 
+          `"${name}" in columns ${positions.join(', ')}`
+        ).join(' | ');
+        
+        toast({
+          title: `⚠️ ${duplicates.length} Duplicate Column Name${duplicates.length > 1 ? 's' : ''} Detected`,
+          description: `${duplicateDetails}. Only the first occurrence of each will be analyzed. Please fix the Excel file for complete analysis.`,
+          variant: 'destructive',
+        });
+        console.warn('⚠️ Duplicate headers detected:', duplicates);
+      }
 
       // Store all headers and data, show header selection
       setAllHeaders(extractedHeaders);
@@ -112,13 +138,21 @@ const Index = () => {
     const result = analyzeProductData(headersToAnalyze, dataToAnalyze, customThresholds, forcedHeaders);
     setAnalysisResult(result);
 
-    // Build taxonomy tree
-    const tree = buildTaxonomyTree(result.hierarchy, dataToAnalyze, headersToAnalyze);
+    // Build taxonomy tree - use custom config if available, otherwise automatic
+    const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
+      ? buildCustomTaxonomyTree(taxonomyConfig, dataToAnalyze, headersToAnalyze)
+      : buildTaxonomyTree(result.hierarchy, dataToAnalyze, headersToAnalyze);
     setTaxonomyTree(tree);
 
-    // Validate data quality
+    // Validate data quality with Salsify compliance checks
     const hierarchyHeaders = result.hierarchy.flatMap(h => h.headers);
-    const validation = validateData(headersToAnalyze, dataToAnalyze, hierarchyHeaders);
+    const validation = validateData(
+      headersToAnalyze, 
+      dataToAnalyze, 
+      hierarchyHeaders,
+      result.recordIdSuggestion || undefined,
+      result.recordNameSuggestion || undefined
+    );
     setValidationResult(validation);
 
     toast({
@@ -127,12 +161,6 @@ const Index = () => {
     });
   };
 
-  const handleThresholdsChange = (newThresholds: { parent: number; childrenMin: number; childrenMax: number; sku: number; minPropertiesPerLevel: number }) => {
-    if (headers.length > 0 && data.length > 0) {
-      // CRITICAL: Pass forcedSkuHeaders to preserve user selections
-      runAnalysis(headers, data, newThresholds, undefined, forcedSkuHeaders);
-    }
-  };
 
   const handleSkuLevelForcing = (forcedHeaders: string[]) => {
     if (headers.length > 0 && data.length > 0) {
@@ -150,27 +178,97 @@ const Index = () => {
     }
   };
 
-  const handleExportJSON = () => {
+  const handleTaxonomyConfigChange = (config: TaxonomyConfig) => {
+    setTaxonomyConfig(config);
+    
+    // Rebuild taxonomy tree if analysis already exists
+    if (analysisResult && data.length > 0 && headers.length > 0) {
+      const tree = config.levels.length > 0
+        ? buildCustomTaxonomyTree(config, data, headers)
+        : buildTaxonomyTree(analysisResult.hierarchy, data, headers);
+      setTaxonomyTree(tree);
+      
+      toast({
+        title: 'Taxonomy Configuration Updated',
+        description: config.levels.length > 0 
+          ? `Custom taxonomy with ${config.levels.length} levels applied.`
+          : 'Using automatic taxonomy tree generation.',
+      });
+    }
+  };
+
+  const handlePresetSelection = (preset: any) => {
+    console.log('\n🔵 ========== PRESET SELECTION ==========');
+    console.log('🔵 Preset name:', preset.name);
+    console.log('🔵 Preset hierarchy levels:', preset.hierarchy.length);
+    
+    setSelectedPreset(preset);
+    
     if (!analysisResult) return;
-
-    // Generate comprehensive export report
-    const exportData = generateExportReport(analysisResult, headers, data);
-
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-      type: 'application/json',
+    
+    // Log initial hierarchy
+    preset.hierarchy.forEach((level: any, i: number) => {
+      console.log(`\n🔵 [BEFORE] Level ${i + 1}: ${level.name}`);
+      console.log(`  - Record ID: "${level.recordId}"`);
+      console.log(`  - Record Name: "${level.recordName}"`);
+      console.log(`  - Headers (${level.headers.length}):`, level.headers);
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `product-taxonomy-analysis-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
+    
+    // CRITICAL: Apply deduplication to preset hierarchy
+    // Properties should only appear in their lowest level
+    const deduplicatedHierarchy = [...preset.hierarchy];
+    const seenProperties = new Set<string>();
+    
+    // Iterate from last level to first (bottom-up)
+    for (let i = deduplicatedHierarchy.length - 1; i >= 0; i--) {
+      const level = deduplicatedHierarchy[i];
+      
+      // Add Record ID and Record Name to seen properties
+      if (level.recordId) seenProperties.add(level.recordId);
+      if (level.recordName) seenProperties.add(level.recordName);
+      
+      // Remove properties that were already seen in lower levels
+      const beforeCount = level.headers.length;
+      level.headers = level.headers.filter((h: string) => {
+        if (seenProperties.has(h)) {
+          console.log(`🔍 Removing duplicate "${h}" from level ${i + 1}`);
+          return false;
+        }
+        seenProperties.add(h);
+        return true;
+      });
+      
+      if (beforeCount !== level.headers.length) {
+        console.log(`🔍 Level ${i + 1} after deduplication: ${level.headers.length} headers (was ${beforeCount})`);
+      }
+    }
+    
+    // Update analysis result with deduplicated preset hierarchy
+    const updatedResult = {
+      ...analysisResult,
+      hierarchy: deduplicatedHierarchy,
+      properties: preset.properties,
+      hierarchyConfidence: preset.confidence,
+    };
+    
+    setAnalysisResult(updatedResult);
+    
+    // Rebuild taxonomy tree with new hierarchy - use custom config if available
+    const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
+      ? buildCustomTaxonomyTree(taxonomyConfig, data, headers)
+      : buildTaxonomyTree(preset.hierarchy, data, headers);
+    setTaxonomyTree(tree);
+    
+    // Revalidate data with Salsify compliance checks
+    const hierarchyHeaders = preset.hierarchy.flatMap((h: any) => h.headers);
+    const recordId = preset.hierarchy[preset.hierarchy.length - 1]?.recordId;
+    const recordName = preset.hierarchy[preset.hierarchy.length - 1]?.recordName;
+    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName);
+    setValidationResult(validation);
+    
     toast({
-      title: 'JSON Export Successful',
-      description: 'Comprehensive analysis report has been downloaded.',
+      title: 'Preset Applied',
+      description: `${preset.name} structure selected. Hierarchy updated.`,
     });
   };
 
@@ -209,24 +307,10 @@ const Index = () => {
               </p>
             </div>
             {analysisResult && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button className="gap-2">
-                    <Download className="w-4 h-4" />
-                    <span className="hidden sm:inline">Export Report</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem onClick={handleExportJSON}>
-                    <FileJson className="w-4 h-4 mr-2" />
-                    Export as JSON
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleExportPDF}>
-                    <FileText className="w-4 h-4 mr-2" />
-                    Export as PDF
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <Button className="gap-2" onClick={handleExportPDF}>
+                <FileText className="w-4 h-4" />
+                <span className="hidden sm:inline">Export PDF Report</span>
+              </Button>
             )}
           </div>
         </div>
@@ -251,11 +335,14 @@ const Index = () => {
 
               {analysisResult && (
                 <>
-                  {/* Threshold Adjuster - Interactive tuning - MOVED HERE */}
-                  <ThresholdAdjuster 
-                    currentThresholds={analysisResult.thresholds}
-                    onThresholdsChange={handleThresholdsChange}
-                  />
+                  {/* NEW: Preset Selector - Choose structure type */}
+                  {analysisResult.hierarchyPresets && analysisResult.hierarchyPresets.length > 0 && (
+                    <PresetSelector
+                      presets={analysisResult.hierarchyPresets}
+                      onSelectPreset={handlePresetSelection}
+                      selectedPreset={selectedPreset}
+                    />
+                  )}
                   
                   {/* SKU-Level Forcing - Force properties to SKU-level */}
                   <SkuLevelForcing
@@ -277,7 +364,14 @@ const Index = () => {
                     propertiesWithoutValues={analysisResult.propertiesWithoutValues}
                   />
                   
-                  {/* Taxonomy Tree - RIGHT AFTER Hierarchy Proposal */}
+                  {/* Taxonomy Configuration - Allow custom taxonomy setup */}
+                  <TaxonomyBuilder
+                    availableProperties={headers}
+                    onConfigChange={handleTaxonomyConfigChange}
+                    initialConfig={taxonomyConfig || undefined}
+                  />
+                  
+                  {/* Taxonomy Tree - Shows result based on configuration */}
                   {taxonomyTree && (
                     <TaxonomyTreeVisualization tree={taxonomyTree} />
                   )}
@@ -289,10 +383,11 @@ const Index = () => {
                     recordIdNameSuggestions={analysisResult.recordIdNameSuggestions}
                     propertyRecommendations={analysisResult.propertyRecommendations}
                     uomSuggestions={[]}
+                    hierarchy={analysisResult.hierarchy}
                   />
                   
                   {/* CORE: Best Practices & Recommendations */}
-                  <BestPracticesRecommendations analysisResult={analysisResult} />
+                  <BestPracticesRecommendations analysisResult={analysisResult} taxonomyTree={taxonomyTree} />
                   
                   {/* Data Quality Warnings - LAST */}
                   {validationResult && (

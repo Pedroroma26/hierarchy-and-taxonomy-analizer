@@ -1,73 +1,127 @@
-# Welcome to your Lovable project
+# Product Hierarchy & Taxonomy Analyzer
 
-## Project info
+AI-powered tool for analyzing product data and designing optimal hierarchy structures for PIM/MDM implementations.
 
-**URL**: https://lovable.dev/projects/ef4a08ea-7512-4183-b258-17b716b89c4c
+## 🎯 What does it do?
 
-## How can I edit this code?
+Analyzes raw product data (Excel/CSV) and automatically:
+- Calculates cardinality scores for all attributes
+- Recommends optimal hierarchy structure (Brand → Category → SKU levels)
+- Classifies attributes into logical taxonomy groups
+- Suggests Record IDs and Record Names for each level
+- Validates data quality and completeness
+- Generates export-ready documentation for PIM platforms (Salsify, Akeneo, etc.)
 
-There are several ways of editing your application.
+## 🚀 Live Demo
 
-**Use Lovable**
+**Production:** https://hierarchy-and-taxonomy-analizer--promariz.replit.app/
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/ef4a08ea-7512-4183-b258-17b716b89c4c) and start prompting.
+## 🛠️ Tech Stack
 
-Changes made via Lovable will be committed automatically to this repo.
+- **Frontend:** React + TypeScript
+- **Build Tool:** Vite
+- **UI Framework:** Tailwind CSS + shadcn/ui
+- **Data Processing:** Client-side analysis (no backend required)
+- **Charts:** Recharts
+- **Export:** PDF generation, JSON export
 
-**Use your preferred IDE**
+## 📦 Installation
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Prerequisites
+- Node.js 18+ and npm ([install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating))
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Setup
 
-Follow these steps:
+```bash
+# Clone the repository
+git clone https://github.com/Pedroroma26/hierarchy-and-taxonomy-analizer.git
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+# Navigate to project directory
+cd hierarchy-and-taxonomy-analizer
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Install dependencies
+npm install
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+The app will be available at `http://localhost:5173`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 🏗️ Build for Production
 
-**Use GitHub Codespaces**
+```bash
+# Create production build
+npm run build
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+# Preview production build locally
+npm run preview
+```
 
-## What technologies are used for this project?
+## 📁 Project Structure
 
-This project is built with:
+```
+src/
+├── components/          # React components
+│   ├── FileUpload.tsx          # File upload interface
+│   ├── CardinalityAnalysis.tsx # Cardinality visualization
+│   ├── HierarchyProposal.tsx   # Hierarchy display
+│   ├── PropertyRecommendations.tsx
+│   ├── ThresholdAdjuster.tsx   # Interactive threshold controls
+│   └── SkuLevelForcing.tsx     # Manual property forcing
+├── utils/
+│   ├── analysisEngine.ts       # Core analysis logic
+│   ├── exportReport.ts         # JSON/PDF export
+│   └── dataValidation.ts       # Data quality checks
+├── pages/
+│   └── Index.tsx               # Main application page
+└── main.tsx                    # App entry point
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## 🎨 Key Features
 
-## How can I deploy this project?
+### 1. Cardinality-Based Analysis
+Automatically calculates uniqueness scores to determine optimal hierarchy placement:
+- **0-20% unique:** Parent/Brand level
+- **20-75% unique:** Child/Category levels  
+- **98%+ unique:** SKU/Item level
 
-Simply open [Lovable](https://lovable.dev/projects/ef4a08ea-7512-4183-b258-17b716b89c4c) and click on Share -> Publish.
+### 2. Smart Property Classification
+Groups attributes into logical categories:
+- SKU Identifiers (SKU, EAN, GTIN)
+- Measurements & UoM
+- Logistics & Inventory
+- Technical Specs & Dates
+- Descriptions & Names
 
-## Can I connect a custom domain to my Lovable project?
+### 3. Interactive Refinement
+- Adjust cardinality thresholds with sliders
+- Force specific properties to SKU-level
+- Changes are cumulative and persistent during session
 
-Yes, you can!
+### 4. Data Quality Validation
+- Missing value detection
+- Duplicate property warnings
+- Completeness scoring per attribute
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### 5. Export Options
+- **JSON:** Machine-readable hierarchy structure
+- **PDF:** Human-readable documentation with charts and recommendations
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## 🔒 Privacy & Security
+
+**All data processing happens client-side:**
+- Files are processed in the browser (no upload to server)
+- No data is stored or transmitted
+- Refresh page = all data cleared from memory
+- GDPR compliant by design
+
+## 🤝 Contributing
+
+This is a demonstration project. For questions or suggestions:
+- GitHub: [@Pedroroma26](https://github.com/Pedroroma26)
+- Repository: [hierarchy-and-taxonomy-analizer](https://github.com/Pedroroma26/hierarchy-and-taxonomy-analizer)
+
+## 📄 License
+
+MIT License - see LICENSE file for details

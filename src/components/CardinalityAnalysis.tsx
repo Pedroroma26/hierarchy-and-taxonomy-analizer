@@ -10,7 +10,9 @@ export interface CardinalityScore {
   uniqueCount: number;
   totalCount: number;
   cardinality: number;
-  classification: 'level1' | 'level2' | 'level3' | 'level4';
+  completeness: number; // NEW: % of non-empty values (data density)
+  hierarchyScore: number; // NEW: Combined score for hierarchy placement
+  classification: 'level1' | 'level2' | 'level3';
 }
 
 interface CardinalityAnalysisProps {
@@ -33,9 +35,7 @@ export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisP
       case 'level2':
         return 'bg-green-500 text-white';
       case 'level3':
-        return 'bg-yellow-500 text-white';
-      case 'level4':
-        return 'bg-red-500 text-white';
+        return 'bg-red-500 text-white'; // SKU-level
       default:
         return 'bg-muted text-muted-foreground';
     }
@@ -46,11 +46,9 @@ export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisP
       case 'level1':
         return 'Level 1: Parent';
       case 'level2':
-        return 'Level 2: Children';
+        return 'Level 2: Child/Variant';
       case 'level3':
-        return 'Level 3: Grandchildren';
-      case 'level4':
-        return 'Level 4: SKU';
+        return 'Level 3: SKU';
       default:
         return 'Unknown';
     }
@@ -83,9 +81,8 @@ export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisP
               </p>
               <div className="flex gap-2 items-center flex-wrap">
                 <Badge className="bg-blue-500 text-white text-xs px-2 py-1">Level 1: Parent</Badge>
-                <Badge className="bg-green-500 text-white text-xs px-2 py-1">Level 2: Children</Badge>
-                <Badge className="bg-yellow-500 text-white text-xs px-2 py-1">Level 3: Grandchildren</Badge>
-                <Badge className="bg-red-500 text-white text-xs px-2 py-1">Level 4: SKU</Badge>
+                <Badge className="bg-green-500 text-white text-xs px-2 py-1">Level 2: Child/Variant</Badge>
+                <Badge className="bg-red-500 text-white text-xs px-2 py-1">Level 3: SKU</Badge>
               </div>
             </div>
           </div>

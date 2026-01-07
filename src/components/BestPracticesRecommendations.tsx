@@ -14,10 +14,12 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { AnalysisResult } from '@/utils/analysisEngine';
+import { TaxonomyTreeNode } from '@/utils/exportReport';
 import { ScrollArea } from './ui/scroll-area';
 
 interface BestPracticesRecommendationsProps {
   analysisResult: AnalysisResult;
+  taxonomyTree?: TaxonomyTreeNode;
 }
 
 interface Recommendation {
@@ -30,7 +32,8 @@ interface Recommendation {
 }
 
 export const BestPracticesRecommendations = ({ 
-  analysisResult 
+  analysisResult,
+  taxonomyTree
 }: BestPracticesRecommendationsProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const recommendations: Recommendation[] = [];
@@ -42,32 +45,51 @@ export const BestPracticesRecommendations = ({
         recommendations.push({
           type: 'important',
           category: 'uom',
-          title: `Split UOM in "${uom.header}"`,
-          description: `This field contains embedded unit of measure. Best practice is to separate value and UOM into two properties.`,
-          impact: 'Improves data consistency, enables proper filtering, and follows Salsify best practices.',
+          title: `Split "${uom.header}" into Value + Unit`,
+          description: `Field contains mixed value and unit (e.g., "12g"). Split into two separate properties.`,
+          impact: 'Enables filtering, calculations, and unit conversions.',
           examples: [
-            `Current: "${uom.header}" = "12g"`,
-            `Recommended: "${uom.header}" = "12" + "${uom.header} UOM" = "g"`,
-            ...(uom.suggestedConversions ? [`Conversions available: ${uom.suggestedConversions.join(', ')}`] : [])
+            `Current: "${uom.header}" contains "12g"`,
+            `Action: Create "${uom.header}" = "12" and "${uom.header} UOM" = "g"`
           ]
         });
       }
     });
   }
 
-  // 2. Taxonomy at Highest Level
-  const taxonomyProperties = analysisResult.hierarchy.length > 0 
-    ? analysisResult.hierarchy[0].headers 
-    : [];
+  // 2. Taxonomy Compliance Check - Use ACTUAL taxonomy tree properties
+  const taxonomyProperties = taxonomyTree?.taxonomyProperties || [];
+  const level1Headers = analysisResult.hierarchy.length > 0 ? analysisResult.hierarchy[0].headers : [];
   
+  // Check which taxonomy properties are at Level 1 vs lower levels
+  const taxonomyAtTopLevel = taxonomyProperties.filter(prop => level1Headers.includes(prop));
+  const taxonomyInWrongLevel = taxonomyProperties.filter(prop => !level1Headers.includes(prop));
+  
+  // ALWAYS SHOW if taxonomy properties exist - with green/red indicators
   if (taxonomyProperties.length > 0) {
+    const hasErrors = taxonomyInWrongLevel.length > 0;
     recommendations.push({
-      type: 'critical',
+      type: hasErrors ? 'critical' : 'suggestion',
       category: 'taxonomy',
-      title: 'Taxonomy Properties Identified',
-      description: `${taxonomyProperties.length} properties identified as taxonomy (categorization). These MUST be at the highest hierarchy level.`,
-      impact: 'Ensures proper product categorization and navigation structure in Salsify.',
-      examples: taxonomyProperties.map(prop => `✓ ${prop} (Taxonomy property)`)
+      title: hasErrors 
+        ? `Taxonomy: ${taxonomyInWrongLevel.length} Incorrect, ${taxonomyAtTopLevel.length} Correct`
+        : `Taxonomy: ${taxonomyAtTopLevel.length} Properties Correctly Positioned`,
+      description: hasErrors
+        ? `Some taxonomy properties in wrong hierarchy level. Should be at Level 1.`
+        : `All taxonomy properties correctly placed at top hierarchy level.`,
+      impact: hasErrors
+        ? 'Move incorrect properties to Level 1 for proper categorization.'
+        : 'Taxonomy structure is correct. Enables proper filtering and navigation.',
+      examples: [
+        ...(taxonomyAtTopLevel.length > 0 
+          ? taxonomyAtTopLevel.map(prop => `✅ ${prop} (Level 1)`)
+          : []
+        ),
+        ...(taxonomyInWrongLevel.length > 0 
+          ? taxonomyInWrongLevel.map(prop => `❌ ${prop} → Move to Level 1`)
+          : []
+        )
+      ]
     });
   }
 
@@ -76,12 +98,12 @@ export const BestPracticesRecommendations = ({
     recommendations.push({
       type: 'critical',
       category: 'structure',
-      title: 'No Record ID Detected',
-      description: 'Could not identify a unique identifier field. Every product MUST have a unique Record ID.',
-      impact: 'Without Record ID, products cannot be properly imported or managed in Salsify.',
+      title: 'Missing Unique Identifier (Record ID)',
+      description: 'No unique identifier column found. Required for Salsify import.',
+      impact: 'Cannot import products without unique IDs.',
       examples: [
-        'Add a column with unique identifiers (SKU, Product Code, etc.)',
-        'Ensure values are 100% unique across all products'
+        'Action: Add SKU, Product Code, or Item Number column',
+        'Requirement: Values must be 100% unique'
       ]
     });
   }
@@ -90,28 +112,37 @@ export const BestPracticesRecommendations = ({
     recommendations.push({
       type: 'important',
       category: 'structure',
-      title: 'No Record Name Detected',
-      description: 'Could not identify a product name field. Record Name is essential for product identification.',
-      impact: 'Makes product management and search difficult in Salsify.',
+      title: 'Missing Product Name (Record Name)',
+      description: 'No product name/title column found.',
+      impact: 'Difficult to identify products in Salsify interface.',
       examples: [
-        'Add a "Product Name" or "Title" column',
-        'Should be human-readable and descriptive'
+        'Action: Add "Product Name" or "Title" column',
+        'Example: "Men\'s Cotton T-Shirt Blue Large"'
       ]
     });
   }
 
-  // 4. Orphaned Records
+  // 4. Orphaned Records - Products with Missing Data
   if (analysisResult.orphanedRecords.length > 0) {
-    const percentage = ((analysisResult.orphanedRecords.length / analysisResult.cardinalityScores[0]?.totalCount || 1) * 100).toFixed(1);
+    const totalProducts = analysisResult.cardinalityScores[0]?.totalCount || analysisResult.orphanedRecords.length;
+    const percentage = ((analysisResult.orphanedRecords.length / totalProducts) * 100).toFixed(1);
+    const completeProducts = totalProducts - analysisResult.orphanedRecords.length;
+    
     recommendations.push({
       type: 'important',
       category: 'data_quality',
-      title: `${analysisResult.orphanedRecords.length} Products with Hierarchy Issues`,
-      description: `${percentage}% of products have missing or inconsistent hierarchy values.`,
-      impact: 'These products cannot be properly categorized and may need to be treated as standalone.',
-      examples: analysisResult.orphanedRecords.slice(0, 3).map(record => 
-        `Row ${record.rowIndex + 1}: ${record.issues.join(', ')}`
-      )
+      title: `${analysisResult.orphanedRecords.length} of ${totalProducts} Products Have Missing Data`,
+      description: `${percentage}% incomplete. Missing data.`,
+      impact: `${completeProducts} products OK. ${analysisResult.orphanedRecords.length} need data completion.`,
+      examples: [
+        ...analysisResult.orphanedRecords.slice(0, 3).map(record => {
+          const missingFields = record.issues
+            .filter(issue => issue.includes('Missing value'))
+            .map(issue => issue.replace('Missing value for hierarchy field: ', ''))
+            .join(', ');
+          return `Row ${record.rowIndex + 1}: Missing → ${missingFields || 'Incomplete hierarchy'}`;
+        })
+      ]
     });
   }
 
@@ -126,10 +157,10 @@ export const BestPracticesRecommendations = ({
     recommendations.push({
       type: 'critical',
       category: 'structure',
-      title: 'Duplicate Properties Across Levels',
-      description: 'Some properties appear in multiple hierarchy levels. Properties must be EXCLUSIVE to one level.',
-      impact: 'Causes data conflicts and incorrect product structure in Salsify.',
-      examples: ['Review property allocation', 'Ensure each property belongs to only ONE hierarchy level']
+      title: 'Duplicate Properties in Multiple Levels',
+      description: 'Same property appears in multiple hierarchy levels.',
+      impact: 'Data conflicts - each property must exist in only ONE level.',
+      examples: ['Action: Review hierarchy structure', 'Rule: One property = One level only']
     });
   }
 
@@ -142,9 +173,9 @@ export const BestPracticesRecommendations = ({
     recommendations.push({
       type: 'suggestion',
       category: 'data_quality',
-      title: `${picklistProperties.length} Properties Should Be Picklists`,
-      description: 'These properties have limited, repeating values. Converting to picklists improves data consistency.',
-      impact: 'Reduces data entry errors and ensures standardized values.',
+      title: `${picklistProperties.length} Properties → Convert to Picklist`,
+      description: 'Fields with limited repeating values. Use dropdowns instead of free text.',
+      impact: 'Prevents typos, standardizes values, easier filtering.',
       examples: picklistProperties.slice(0, 3).map(prop => 
         `${prop.header}: ${prop.picklistValues!.length} values (${prop.picklistValues!.slice(0, 3).join(', ')}...)`
       )
@@ -157,12 +188,12 @@ export const BestPracticesRecommendations = ({
     recommendations.push({
       type: 'important',
       category: 'structure',
-      title: 'Mixed Model Recommended',
-      description: mixed.reasoning,
-      impact: 'Some products fit hierarchical structure, others should be standalone.',
+      title: 'Consider Mixed Model Structure',
+      description: 'Dataset contains both hierarchical and standalone products.',
+      impact: 'Some products fit parent-child, others work better standalone.',
       examples: [
-        `${mixed.hierarchicalPercentage.toFixed(1)}% products: Use hierarchy`,
-        `${mixed.standalonePercentage.toFixed(1)}% products: Treat as standalone`
+        `${mixed.hierarchicalPercentage.toFixed(1)}% → Use Parent-Variant structure`,
+        `${mixed.standalonePercentage.toFixed(1)}% → Keep as Standalone (Flat Model)`
       ]
     });
   }
