@@ -105,7 +105,10 @@ const propertyGroups = {
       // Dietary
       'vegan', 'vegetarian', 'organic', 'kosher', 'halal',
       'gluten free', 'lactose free', 'sugar free', 'fat free',
-      'non-gmo', 'gmo free'
+      'non-gmo', 'gmo free',
+      // Flavour & Taste
+      'flavour', 'flavor', 'taste', 'aroma', 'scent', 'fragrance',
+      'type of drink', 'drink type', 'beverage type'
     ],
     icon: Salad,
     color: 'bg-orange-500'
@@ -154,19 +157,42 @@ export const SkuLevelForcing = ({ headers, currentHierarchy, onApply }: SkuLevel
   const [manuallySelected, setManuallySelected] = useState<Set<string>>(new Set());
   const [excludedFromGroups, setExcludedFromGroups] = useState<Set<string>>(new Set());
 
+  // Get properties currently NOT in SKU-level (lowest level)
+  // These are the ONLY properties that should be available for forcing
+  // MOVED UP: This needs to be calculated before propertyGroupMapping
+  const nonSkuProperties = useMemo(() => {
+    const skuLevel = currentHierarchy[currentHierarchy.length - 1];
+    if (!skuLevel) return [];  // No hierarchy = nothing to force
+    
+    // If only 1 level (Flat Model), all properties are at SKU level already
+    if (currentHierarchy.length === 1) return [];
+    
+    // Get all properties in the SKU level (headers + recordId + recordName)
+    const skuLevelProperties = new Set([
+      ...skuLevel.headers,
+      skuLevel.recordId,
+      skuLevel.recordName
+    ].filter(Boolean));
+    
+    // Return only properties that are NOT in the SKU level
+    return headers.filter(h => !skuLevelProperties.has(h));
+  }, [headers, currentHierarchy]);
+
   // Detect which properties belong to which groups
+  // CRITICAL: Only map from nonSkuProperties, not all headers
   const propertyGroupMapping = useMemo(() => {
     const mapping: Record<string, string[]> = {};
     
     Object.entries(propertyGroups).forEach(([groupKey, group]) => {
-      mapping[groupKey] = headers.filter(header => {
+      // Only include properties that are NOT already at SKU level
+      mapping[groupKey] = nonSkuProperties.filter(header => {
         const headerLower = header.toLowerCase();
         return group.keywords.some(kw => headerLower.includes(kw));
       });
     });
     
     return mapping;
-  }, [headers]);
+  }, [nonSkuProperties]);
 
   // Get properties that will be forced to SKU-level
   const forcedProperties = useMemo(() => {
@@ -186,14 +212,6 @@ export const SkuLevelForcing = ({ headers, currentHierarchy, onApply }: SkuLevel
     
     return Array.from(forced);
   }, [selectedGroups, manuallySelected, excludedFromGroups, propertyGroupMapping]);
-
-  // Get properties currently NOT in SKU-level
-  const nonSkuProperties = useMemo(() => {
-    const skuLevel = currentHierarchy[currentHierarchy.length - 1];
-    if (!skuLevel) return headers;
-    
-    return headers.filter(h => !skuLevel.headers.includes(h));
-  }, [headers, currentHierarchy]);
 
   // Get properties that are candidates for forcing (not already in SKU)
   const candidateProperties = useMemo(() => {
@@ -282,6 +300,21 @@ export const SkuLevelForcing = ({ headers, currentHierarchy, onApply }: SkuLevel
 
           {isExpanded && (
             <>
+              {/* Show message if no properties available to force (Flat Model or all at SKU) */}
+              {nonSkuProperties.length === 0 ? (
+                <div className="p-6 text-center bg-muted/30 rounded-lg border border-dashed">
+                  <Package className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                  <h3 className="text-lg font-semibold text-muted-foreground">
+                    All properties are already at SKU-level
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {currentHierarchy.length === 1 
+                      ? 'This is a Flat Model with all properties at the lowest level.'
+                      : 'All properties are already assigned to the SKU-level (lowest level) in this hierarchy.'}
+                  </p>
+                </div>
+              ) : (
+              <>
               {/* Property Groups */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -430,6 +463,8 @@ export const SkuLevelForcing = ({ headers, currentHierarchy, onApply }: SkuLevel
                   Apply & Rerun Analysis ({forcedProperties.length} properties)
                 </Button>
               </div>
+              </>
+              )}
             </>
           )}
         </div>

@@ -49,8 +49,8 @@ export const validateData = (
   const recordNameWarnings = validateRecordName(headers, data, recordNameField);
   warnings.push(...recordNameWarnings);
 
-  // 3. Detect duplicate products
-  const duplicateWarnings = detectDuplicates(headers, data);
+  // 3. Detect duplicate products - pass SKU Record ID to differentiate severity
+  const duplicateWarnings = detectDuplicates(headers, data, recordIdField);
   warnings.push(...duplicateWarnings);
 
   // 4. Detect inconsistent values (normalization opportunities)
@@ -61,9 +61,9 @@ export const validateData = (
   const missingHierarchyWarnings = detectMissingHierarchyValues(headers, data, hierarchyHeaders);
   warnings.push(...missingHierarchyWarnings);
 
-  // 6. Detect outliers
-  const outlierWarnings = detectOutliers(headers, data);
-  warnings.push(...outlierWarnings);
+  // 6. Outlier detection REMOVED - not useful for data quality assessment
+  // const outlierWarnings = detectOutliers(headers, data);
+  // warnings.push(...outlierWarnings);
 
   const criticalIssues = warnings.filter(w => w.severity === 'high').length;
 
@@ -100,10 +100,15 @@ const validateRecordId = (
   const specialCharExamples: string[] = [];
 
   data.forEach((row, rowIndex) => {
+    // Skip completely empty rows (trailing empty rows from Excel)
+    if (!row || row.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) {
+      return;
+    }
+    
     const value = row[colIndex];
     const excelRow = rowIndex + 2;
     
-    // Check empty
+    // Check empty Record ID (but row has other data)
     if (value === null || value === undefined || String(value).trim() === '') {
       emptyRows.push(excelRow);
       return;
@@ -190,6 +195,11 @@ const validateRecordName = (
   const emptyRows: number[] = [];
 
   data.forEach((row, rowIndex) => {
+    // Skip completely empty rows (trailing empty rows from Excel)
+    if (!row || row.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) {
+      return;
+    }
+    
     const value = row[colIndex];
     if (value === null || value === undefined || String(value).trim() === '') {
       emptyRows.push(rowIndex + 2);
@@ -214,58 +224,59 @@ const validateRecordName = (
 };
 
 /**
- * Detect duplicate products based on key fields
+ * Detect duplicate Record IDs ONLY
+ * Only checks the SKU-level Record ID field - other duplicates are not relevant for Salsify
  */
-const detectDuplicates = (headers: string[], data: any[][]): DataValidationWarning[] => {
+const detectDuplicates = (headers: string[], data: any[][], skuRecordIdField?: string): DataValidationWarning[] => {
   const warnings: DataValidationWarning[] = [];
 
-  headers.forEach((header, colIndex) => {
-    const headerLower = header.toLowerCase();
-    
-    // Only check ID fields
-    const isIDField = ID_KEYWORDS.some(kw => headerLower.includes(kw));
-    
-    // Skip excluded fields
-    const isExcluded = EXCLUDE_KEYWORDS.some(kw => headerLower.includes(kw));
-    
-    if (!isIDField || isExcluded) {
-      return; // Skip this field
+  // ONLY check the SKU Record ID field for duplicates
+  // Other fields like "Pallet type", "Half Pallet", etc. can have duplicates - that's normal
+  if (!skuRecordIdField) return warnings;
+  
+  const colIndex = headers.indexOf(skuRecordIdField);
+  if (colIndex === -1) return warnings;
+
+  const valueMap = new Map<string, number[]>();
+  
+  data.forEach((row, rowIndex) => {
+    // Skip completely empty rows (trailing empty rows from Excel)
+    if (!row || row.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) {
+      return;
     }
-
-    const valueMap = new Map<string, number[]>();
     
-    data.forEach((row, rowIndex) => {
-      const value = row[colIndex];
-      if (value !== null && value !== undefined && value !== '') {
-        const valueStr = String(value).trim();
-        if (!valueMap.has(valueStr)) {
-          valueMap.set(valueStr, []);
-        }
-        valueMap.get(valueStr)!.push(rowIndex + 2); // +2 for Excel row number (header + 0-index)
+    const value = row[colIndex];
+    if (value !== null && value !== undefined && value !== '') {
+      const valueStr = String(value).trim();
+      if (!valueMap.has(valueStr)) {
+        valueMap.set(valueStr, []);
       }
-    });
-
-    // Find duplicates
-    const duplicates = Array.from(valueMap.entries()).filter(([_, indices]) => indices.length > 1);
-    
-    if (duplicates.length > 0) {
-      const affectedRows = duplicates.flatMap(([_, indices]) => indices);
-      const duplicateExamples = duplicates.slice(0, 3).map(([value, rows]) => 
-        `"${value}" → Rows ${rows.slice(0, 3).join(', ')}${rows.length > 3 ? '...' : ''}`
-      );
-      warnings.push({
-        type: 'duplicate',
-        severity: 'high',
-        title: `Duplicate ${header} Values`,
-        message: `${duplicates.length} values appear multiple times. ${affectedRows.length} rows affected.`,
-        affectedRows,
-        affectedCount: affectedRows.length,
-        suggestion: `Each ${header} must be unique. Add suffix or correct duplicates.`,
-        examples: duplicateExamples,
-        salsifyRule: 'Unique identifiers required for import',
-      });
+      valueMap.get(valueStr)!.push(rowIndex + 2); // +2 for Excel row number (header + 0-index)
     }
   });
+
+  // Find duplicates
+  const duplicates = Array.from(valueMap.entries()).filter(([_, indices]) => indices.length > 1);
+  
+  if (duplicates.length > 0) {
+    const affectedRows = duplicates.flatMap(([_, indices]) => indices);
+    const duplicateExamples = duplicates.slice(0, 3).map(([value, rows]) => 
+      `"${value}" → Rows ${rows.slice(0, 3).join(', ')}${rows.length > 3 ? '...' : ''}`
+    );
+    
+    // SKU-level Record ID duplicates are CRITICAL - only first instance will be created
+    warnings.push({
+      type: 'duplicate',
+      severity: 'high',
+      title: `⚠️ CRITICAL: Duplicate Record ID "${skuRecordIdField}"`,
+      message: `${duplicates.length} values appear multiple times. ${affectedRows.length} rows affected. Only the FIRST instance of each duplicate will be imported - others will be IGNORED.`,
+      affectedRows,
+      affectedCount: affectedRows.length,
+      suggestion: `Record IDs MUST be unique in Salsify. Each duplicate after the first will be skipped during import. Add suffix or correct duplicates immediately.`,
+      examples: duplicateExamples,
+      salsifyRule: 'Unique Record IDs required - duplicates are ignored on import',
+    });
+  }
 
   return warnings;
 };
@@ -351,6 +362,11 @@ const detectMissingHierarchyValues = (
     const missingRows: number[] = [];
     
     data.forEach((row, rowIndex) => {
+      // Skip completely empty rows (trailing empty rows from Excel)
+      if (!row || row.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) {
+        return;
+      }
+      
       const value = row[colIndex];
       if (value === null || value === undefined || String(value).trim() === '') {
         missingRows.push(rowIndex);

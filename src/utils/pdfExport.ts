@@ -3,15 +3,18 @@ import autoTable from 'jspdf-autotable';
 import { AnalysisResult } from './analysisEngine';
 import { TaxonomyTreeNode } from './exportReport';
 
-// Professional color palette
+// Professional color palette - Executive style
 const COLORS = {
-  primary: [37, 99, 235] as [number, number, number],      // Blue-600
-  primaryDark: [29, 78, 216] as [number, number, number],  // Blue-700
+  primary: [30, 64, 175] as [number, number, number],      // Deep Blue
+  primaryLight: [59, 130, 246] as [number, number, number], // Blue-500
   success: [22, 163, 74] as [number, number, number],      // Green-600
+  successLight: [220, 252, 231] as [number, number, number], // Green-100
   warning: [217, 119, 6] as [number, number, number],      // Amber-600
-  danger: [220, 38, 38] as [number, number, number],       // Red-600
+  warningLight: [254, 243, 199] as [number, number, number], // Amber-100
+  danger: [185, 28, 28] as [number, number, number],       // Red-700
+  dangerLight: [254, 226, 226] as [number, number, number], // Red-100
   gray: [107, 114, 128] as [number, number, number],       // Gray-500
-  grayLight: [243, 244, 246] as [number, number, number],  // Gray-100
+  grayLight: [249, 250, 251] as [number, number, number],  // Gray-50
   grayMedium: [229, 231, 235] as [number, number, number], // Gray-200
   white: [255, 255, 255] as [number, number, number],
   black: [17, 24, 39] as [number, number, number],         // Gray-900
@@ -55,9 +58,9 @@ export const generatePDFReport = (
   const doc = new jsPDF();
   let yPosition = 20;
 
-  // Helper function to add a new page if needed
+  // Helper function to add a new page if needed (leave space for footer)
   const checkPageBreak = (requiredSpace: number = 20) => {
-    if (yPosition + requiredSpace > 275) {
+    if (yPosition + requiredSpace > 260) {
       doc.addPage();
       yPosition = 25;
       return true;
@@ -96,62 +99,91 @@ export const generatePDFReport = (
   const modelType = selectedPreset?.modelType || 'Custom';
   const modelName = selectedPreset?.name || 'Custom Configuration';
 
-  // ===== COVER PAGE =====
-  // Header bar
+  // ===== PAGE 1: EXECUTIVE SUMMARY =====
+  // Clean header bar
   doc.setFillColor(...COLORS.primary);
-  doc.rect(0, 0, 210, 45, 'F');
+  doc.rect(0, 0, 210, 40, 'F');
   
-  doc.setFontSize(28);
+  doc.setFontSize(24);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...COLORS.white);
-  doc.text('Product Data Model', 105, 25, { align: 'center' });
-  doc.setFontSize(12);
+  doc.text('Product Data Model Analysis', 105, 22, { align: 'center' });
+  doc.setFontSize(11);
   doc.setFont('helvetica', 'normal');
-  doc.text('Analysis Report', 105, 35, { align: 'center' });
+  doc.text('Executive Summary Report', 105, 32, { align: 'center' });
   
-  doc.setTextColor(...COLORS.black);
-  
-  // Report info
+  // Report metadata
   const reportDate = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric'
   });
-  doc.setFontSize(10);
-  doc.setTextColor(...COLORS.gray);
-  doc.text(`Generated: ${reportDate}`, 105, 55, { align: 'center' });
-
-  // Total properties badge (top right like web app)
-  const totalProps = headers.length;
-  doc.setFillColor(...COLORS.success);
-  doc.roundedRect(150, 50, 45, 15, 3, 3, 'F');
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...COLORS.white);
-  doc.text(`${totalProps} properties`, 172.5, 60, { align: 'center' });
-
-  // Model Type Badge
-  yPosition = 75;
-  doc.setFillColor(...COLORS.primary);
-  doc.roundedRect(55, yPosition, 100, 18, 3, 3, 'F');
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...COLORS.white);
-  doc.text(modelName.toUpperCase(), 105, yPosition + 12, { align: 'center' });
   
   doc.setTextColor(...COLORS.black);
-  yPosition += 28;
+  yPosition = 50;
+  
+  // Key Metrics Row - 4 cards
+  const totalProps = headers.length;
+  const totalProducts = data.length;
+  const hierarchyLevels = analysisResult.hierarchy.filter(h => h.headers.length > 0).length;
+  const dataQuality = analysisResult.orphanedRecords.length === 0 ? 100 : 
+    Math.round(((totalProducts - analysisResult.orphanedRecords.length) / totalProducts) * 100);
+  
+  const metrics = [
+    { value: totalProducts.toLocaleString(), label: 'Products', color: COLORS.primary },
+    { value: totalProps.toString(), label: 'Properties', color: COLORS.primaryLight },
+    { value: hierarchyLevels.toString(), label: 'Hierarchy Levels', color: COLORS.success },
+    { value: `${dataQuality}%`, label: 'Data Quality', color: dataQuality >= 95 ? COLORS.success : dataQuality >= 80 ? COLORS.warning : COLORS.danger },
+  ];
+  
+  const metricWidth = 42;
+  const metricGap = 5;
+  const startX = 15;
+  
+  metrics.forEach((metric, i) => {
+    const x = startX + (metricWidth + metricGap) * i;
+    doc.setFillColor(...metric.color);
+    doc.roundedRect(x, yPosition, metricWidth, 28, 3, 3, 'F');
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.white);
+    doc.text(metric.value, x + metricWidth/2, yPosition + 14, { align: 'center' });
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.text(metric.label, x + metricWidth/2, yPosition + 22, { align: 'center' });
+  });
+  
+  yPosition += 38;
+  
+  // Model Type - Clean badge
+  doc.setFillColor(...COLORS.grayLight);
+  doc.roundedRect(15, yPosition, 180, 20, 3, 3, 'F');
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...COLORS.gray);
+  doc.text('Recommended Model:', 22, yPosition + 13);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...COLORS.primary);
+  doc.text(modelName, 75, yPosition + 13);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...COLORS.gray);
+  doc.text(`Generated: ${reportDate}`, 175, yPosition + 13, { align: 'right' });
+  
+  doc.setTextColor(...COLORS.black);
+  yPosition += 30;
 
   // ===== HIERARCHY VISUALIZATION (cleaner, lighter design) =====
   const levelColors: { [key: number]: [number, number, number] } = {
     1: [59, 130, 246],   // Blue for Level 1
-    2: [239, 68, 68],    // Red for Level 2
-    3: [34, 197, 94],    // Green for Level 3
+    2: [34, 197, 94],    // Green for Level 2
+    3: [239, 68, 68],    // Red for Level 3
   };
 
-  const hierarchyLevels = analysisResult.hierarchy.filter(level => level.headers.length > 0);
+  const hierarchyLevelsList = analysisResult.hierarchy.filter(level => level.headers.length > 0);
   
-  hierarchyLevels.forEach((level, levelIndex) => {
+  hierarchyLevelsList.forEach((level, levelIndex) => {
       const levelColor = levelColors[level.level] || COLORS.primary;
       const propsWithoutIdName = level.headers.filter(
         h => h !== level.recordId && h !== level.recordName
@@ -237,38 +269,14 @@ export const generatePDFReport = (
     });
 
   // Add spacing after hierarchy boxes
-  yPosition += 10;
+  yPosition += 5;
 
-  // Summary cards (3 cards - Products, Properties, Levels)
-  checkPageBreak(35);
-  const cardWidth = 55;
-  const summaryData = [
-    { label: 'Products', value: data.length.toString() },
-    { label: 'Properties', value: totalProps.toString() },
-    { label: 'Hierarchy Levels', value: analysisResult.hierarchy.filter(h => h.headers.length > 0).length.toString() },
-  ];
-
-  summaryData.forEach((item, i) => {
-    const x = 15 + (cardWidth + 10) * i;
-    doc.setFillColor(...COLORS.grayLight);
-    doc.roundedRect(x, yPosition, cardWidth, 22, 2, 2, 'F');
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.primary);
-    doc.text(item.value, x + cardWidth/2, yPosition + 11, { align: 'center' });
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...COLORS.gray);
-    doc.text(item.label, x + cardWidth/2, yPosition + 18, { align: 'center' });
-  });
-  
-  doc.setTextColor(...COLORS.black);
-
-  // ===== PAGE 3: TAXONOMY =====
+  // ===== PAGE 2: TAXONOMY =====
   doc.addPage();
   yPosition = 25;
   
-  addSectionTitle('Taxonomy Structure');
+  addSectionTitle('Product Taxonomy');
+  addSubtitle('Category structure derived from your data');
   
   // Taxonomy Properties Legend
   const taxonomyProps = taxonomyTree.taxonomyProperties || [];
@@ -285,6 +293,42 @@ export const generatePDFReport = (
     const propsText = taxonomyProps.map((p, i) => `L${i + 1}: ${p}`).join('  |  ');
     doc.text(propsText, 20, yPosition + 15);
     yPosition += 28;
+  }
+  
+  // Taxonomy Validation Status (OK/NOK for parent level)
+  const level1Headers = analysisResult.hierarchy.find(h => h.level === 1)?.headers || [];
+  if (taxonomyProps.length > 0) {
+    const taxonomyOk = taxonomyProps.filter(p => level1Headers.includes(p));
+    const taxonomyNok = taxonomyProps.filter(p => !level1Headers.includes(p));
+    
+    const taxBgColor = taxonomyNok.length === 0 ? COLORS.successLight : COLORS.warningLight;
+    const taxColor = taxonomyNok.length === 0 ? COLORS.success : COLORS.warning;
+    
+    doc.setFillColor(...taxBgColor);
+    const boxHeight = 18 + (taxonomyOk.length > 0 ? 10 : 0) + (taxonomyNok.length > 0 ? 10 : 0);
+    doc.roundedRect(15, yPosition, 180, boxHeight, 3, 3, 'F');
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...taxColor);
+    doc.text('Taxonomy Property Placement', 22, yPosition + 10);
+    yPosition += 16;
+    
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    
+    if (taxonomyOk.length > 0) {
+      doc.setTextColor(...COLORS.success);
+      doc.text(`✓ At Parent Level: ${taxonomyOk.join(', ')}`, 25, yPosition);
+      yPosition += 10;
+    }
+    if (taxonomyNok.length > 0) {
+      doc.setTextColor(...COLORS.danger);
+      doc.text(`✗ Not at Parent Level: ${taxonomyNok.join(', ')}`, 25, yPosition);
+      yPosition += 10;
+    }
+    
+    yPosition += 8;
   }
   
   addSubtitle('Product category tree visualization');
@@ -419,272 +463,165 @@ export const generatePDFReport = (
     }
   });
 
-  // ===== PAGE 5: BEST PRACTICES =====
+  // ===== PAGE 4: DATA QUALITY & RECOMMENDATIONS =====
   doc.addPage();
   yPosition = 25;
   
-  addSectionTitle('Best Practices', COLORS.success);
-  addSubtitle('Recommendations for Salsify import optimization');
-
-  // UOM Split Recommendations
-  const uomSplits = analysisResult.uomSuggestions.filter(uom => uom.suggestedSplit);
-  if (uomSplits.length > 0) {
-    checkPageBreak(30);
-    doc.setFillColor(254, 243, 199);
-    doc.roundedRect(15, yPosition, 180, 12, 3, 3, 'F');
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.warning);
-    doc.text(`${uomSplits.length} UOM Split Recommendations`, 20, yPosition + 8);
-    doc.setTextColor(...COLORS.black);
-    yPosition += 18;
-
-    uomSplits.slice(0, 5).forEach(uom => {
-      checkPageBreak(20);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`• ${uom.header}`, 20, yPosition);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...COLORS.gray);
-      doc.text(`Split into "${uom.header}" + "${uom.header} UOM"`, 25, yPosition + 5);
-      doc.setTextColor(...COLORS.black);
-      yPosition += 12;
-    });
-    yPosition += 5;
-  }
-
-  // Taxonomy Properties Section - show actual taxonomy properties with OK/NOK status
-  const actualTaxonomyProps = taxonomyTree.taxonomyProperties || [];
-  const level1Headers = analysisResult.hierarchy.find(h => h.level === 1)?.headers || [];
+  addSectionTitle('Data Quality Assessment', COLORS.primary);
   
-  if (actualTaxonomyProps.length > 0) {
-    // Check which taxonomy properties are correctly positioned in Level 1
-    const taxonomyStatus = actualTaxonomyProps.map(prop => ({
-      name: prop,
-      isOk: level1Headers.includes(prop)
-    }));
-    
-    const okCount = taxonomyStatus.filter(t => t.isOk).length;
-    const nokCount = taxonomyStatus.filter(t => !t.isOk).length;
-    
-    checkPageBreak(40 + actualTaxonomyProps.length * 12);
-    doc.setFillColor(...COLORS.grayLight);
-    doc.roundedRect(15, yPosition, 180, 28 + actualTaxonomyProps.length * 10, 3, 3, 'F');
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.black);
-    const statusText = nokCount === 0 
-      ? `Taxonomy: ${okCount} Properties Correctly Positioned`
-      : `Taxonomy: ${okCount} OK, ${nokCount} Need Attention`;
-    doc.text(statusText, 20, yPosition + 8);
-    
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...COLORS.gray);
-    doc.text('Taxonomy properties should be at Level 1 (top hierarchy level).', 20, yPosition + 16);
-    
-    yPosition += 26;
-    
-    taxonomyStatus.forEach(item => {
-      // Status box (OK = green, NOK = red)
-      if (item.isOk) {
-        doc.setFillColor(...COLORS.success);
-      } else {
-        doc.setFillColor(...COLORS.danger);
-      }
-      doc.roundedRect(22, yPosition - 5, 12, 7, 1, 1, 'F');
-      doc.setFontSize(6);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...COLORS.white);
-      doc.text(item.isOk ? 'OK' : 'NOK', item.isOk ? 25 : 24, yPosition);
-      
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...COLORS.black);
-      const levelInfo = item.isOk ? '(Level 1)' : '(Not in Level 1)';
-      doc.text(`${item.name} ${levelInfo}`, 38, yPosition);
-      yPosition += 10;
-    });
-    
-    yPosition += 8;
-  }
-
-  // Critical Issues Summary
+  // Data Quality Score Card
+  const qualityScore = dataQuality;
+  const qualityColor = qualityScore >= 95 ? COLORS.success : qualityScore >= 80 ? COLORS.warning : COLORS.danger;
+  const qualityBgColor = qualityScore >= 95 ? COLORS.successLight : qualityScore >= 80 ? COLORS.warningLight : COLORS.dangerLight;
+  
+  doc.setFillColor(...qualityBgColor);
+  doc.roundedRect(15, yPosition, 180, 35, 4, 4, 'F');
+  
+  // Score circle
+  doc.setFillColor(...qualityColor);
+  doc.circle(45, yPosition + 17, 12, 'F');
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...COLORS.white);
+  doc.text(`${qualityScore}%`, 45, yPosition + 21, { align: 'center' });
+  
+  // Quality text
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...qualityColor);
+  const qualityLabel = qualityScore >= 95 ? 'Excellent' : qualityScore >= 80 ? 'Good' : 'Needs Attention';
+  doc.text(`Data Quality: ${qualityLabel}`, 65, yPosition + 14);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...COLORS.gray);
+  const incompleteCount = analysisResult.orphanedRecords.length;
+  doc.text(`${totalProducts - incompleteCount} of ${totalProducts} products are complete`, 65, yPosition + 24);
+  
+  yPosition += 45;
+  
+  // Critical Issues (if any)
   const criticalIssues: string[] = [];
   if (!analysisResult.recordIdSuggestion) criticalIssues.push('Missing Record ID - Required for Salsify import');
-  if (!analysisResult.recordNameSuggestion) criticalIssues.push('Missing Record Name - Recommended for product display');
-  if (analysisResult.orphanedRecords.length > 0) {
-    criticalIssues.push(`${analysisResult.orphanedRecords.length} products with incomplete data`);
+  if (!analysisResult.recordNameSuggestion) criticalIssues.push('Missing Record Name - Recommended for display');
+  
+  // Add validation warnings to critical issues (with row numbers)
+  if (validationResult && validationResult.warnings) {
+    const highSeverityWarnings = validationResult.warnings.filter((w: any) => w.severity === 'high');
+    highSeverityWarnings.forEach((w: any) => {
+      const rowsText = w.affectedRows && w.affectedRows.length > 0 
+        ? ` (Rows: ${w.affectedRows.slice(0, 5).join(', ')}${w.affectedRows.length > 5 ? '...' : ''})` 
+        : '';
+      criticalIssues.push(`${w.title}: ${w.affectedCount} affected${rowsText}`);
+    });
   }
-
+  
   if (criticalIssues.length > 0) {
-    checkPageBreak(30);
-    doc.setFillColor(254, 226, 226);
-    doc.roundedRect(15, yPosition, 180, 10 + criticalIssues.length * 8, 3, 3, 'F');
+    checkPageBreak(20 + criticalIssues.length * 10);
+    doc.setFillColor(...COLORS.dangerLight);
+    doc.roundedRect(15, yPosition, 180, 15 + criticalIssues.length * 9, 3, 3, 'F');
+    
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...COLORS.danger);
-    doc.text('Issues Requiring Attention', 20, yPosition + 8);
-    yPosition += 14;
+    doc.text('Action Required', 22, yPosition + 10);
+    yPosition += 16;
     
-    doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
     doc.setTextColor(...COLORS.black);
     criticalIssues.forEach(issue => {
-      doc.text(`• ${issue}`, 22, yPosition);
-      yPosition += 7;
+      doc.text(`• ${issue}`, 25, yPosition);
+      yPosition += 9;
     });
     yPosition += 10;
   } else {
-    doc.setFillColor(220, 252, 231);
-    doc.roundedRect(15, yPosition, 180, 15, 3, 3, 'F');
+    doc.setFillColor(...COLORS.successLight);
+    doc.roundedRect(15, yPosition, 180, 18, 3, 3, 'F');
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...COLORS.success);
-    doc.text('All critical checks passed', 20, yPosition + 10);
-    doc.setTextColor(...COLORS.black);
-    yPosition += 25;
+    doc.text('✓ All critical checks passed - Ready for import', 22, yPosition + 12);
+    yPosition += 28;
   }
-
-  // Incomplete Products Detail (orphaned records)
-  if (analysisResult.orphanedRecords.length > 0) {
-    checkPageBreak(60);
-    addSectionTitle('Products with Incomplete Data', COLORS.warning);
-    addSubtitle(`${analysisResult.orphanedRecords.length} products have missing hierarchy values`);
-    
-    // Show sample of orphaned records
-    const orphanedSample = analysisResult.orphanedRecords.slice(0, 10);
-    const orphanedData = orphanedSample.map((record, idx) => {
-      const rowNum = typeof record === 'number' ? record : idx + 2;
-      return [`Row ${rowNum}`, 'Missing data'];
-    });
-
-    autoTable(doc, {
-      startY: yPosition,
-      head: [['Excel Row', 'Issue']],
-      body: orphanedData,
-      theme: 'grid',
-      headStyles: { 
-        fillColor: COLORS.warning,
-        textColor: COLORS.white,
-        fontStyle: 'bold',
-        fontSize: 8
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: COLORS.black
-      },
-      margin: { left: 15, right: 15 },
-      columnStyles: {
-        0: { cellWidth: 30 },
-        1: { cellWidth: 140 }
-      }
-    });
-
-    yPosition = (doc as any).lastAutoTable.finalY + 5;
-    
-    if (analysisResult.orphanedRecords.length > 10) {
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'italic');
-      doc.setTextColor(...COLORS.gray);
-      doc.text(`Showing 10 of ${analysisResult.orphanedRecords.length} products with incomplete data`, 15, yPosition);
-      doc.setTextColor(...COLORS.black);
-    }
-  }
-
-  // ===== PAGE 6: DATA QUALITY WARNINGS =====
-  doc.addPage();
-  yPosition = 25;
   
-  addSectionTitle('Data Quality Warnings', COLORS.warning);
-  addSubtitle('Issues detected in the source data');
-
-  if (validationResult && validationResult.warnings.length > 0) {
-    // Summary bar
-    const highCount = validationResult.warnings.filter((w: any) => w.severity === 'high').length;
-    const medCount = validationResult.warnings.filter((w: any) => w.severity === 'medium').length;
-    const lowCount = validationResult.warnings.filter((w: any) => w.severity === 'low').length;
-    
-    doc.setFillColor(...COLORS.grayLight);
-    doc.roundedRect(15, yPosition, 180, 15, 3, 3, 'F');
-    
+  // ===== BEST PRACTICES & RECOMMENDATIONS =====
+  yPosition += 10;
+  checkPageBreak(60);
+  addSectionTitle('Best Practices & Recommendations', COLORS.success);
+  
+  // UOM Split Recommendations
+  const uomSplits = analysisResult.uomSuggestions.filter(uom => uom.suggestedSplit);
+  if (uomSplits.length > 0) {
+    checkPageBreak(20 + Math.min(uomSplits.length, 5) * 10);
+    doc.setFillColor(...COLORS.warningLight);
+    doc.roundedRect(15, yPosition, 180, 16 + Math.min(uomSplits.length, 5) * 10, 3, 3, 'F');
     doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.danger);
-    doc.text(`${highCount} Critical`, 25, yPosition + 10);
     doc.setTextColor(...COLORS.warning);
-    doc.text(`${medCount} Medium`, 70, yPosition + 10);
-    doc.setTextColor(...COLORS.primary);
-    doc.text(`${lowCount} Low`, 115, yPosition + 10);
-    doc.setTextColor(...COLORS.gray);
-    doc.text(`${validationResult.totalIssues} Total`, 155, yPosition + 10);
+    doc.text(`UOM Fields to Split (${uomSplits.length} found)`, 22, yPosition + 10);
+    yPosition += 16;
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
     doc.setTextColor(...COLORS.black);
-    yPosition += 25;
-
-    // Warnings table - full text, no truncation
-    const warningsData = validationResult.warnings.slice(0, 15).map((w: any) => [
-      w.severity.toUpperCase(),
-      w.title,
-      w.message, // Full message, autoTable will wrap
-      w.affectedCount.toString()
-    ]);
-
-    autoTable(doc, {
-      startY: yPosition,
-      head: [['Severity', 'Issue', 'Description', 'Affected']],
-      body: warningsData,
-      theme: 'grid',
-      headStyles: { 
-        fillColor: COLORS.warning,
-        textColor: COLORS.white,
-        fontStyle: 'bold',
-        fontSize: 8
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: COLORS.black,
-        cellPadding: 3
-      },
-      margin: { left: 15, right: 15 },
-      columnStyles: {
-        0: { cellWidth: 18 },
-        1: { cellWidth: 45 },
-        2: { cellWidth: 95 }, // Wider for full text
-        3: { cellWidth: 17 }
-      },
-      styles: {
-        overflow: 'linebreak', // Wrap text instead of truncating
-        cellWidth: 'wrap'
-      },
-      didParseCell: (data) => {
-        if (data.column.index === 0 && data.section === 'body') {
-          const text = data.cell.text[0];
-          if (text === 'HIGH') data.cell.styles.textColor = COLORS.danger;
-          else if (text === 'MEDIUM') data.cell.styles.textColor = COLORS.warning;
-          else data.cell.styles.textColor = COLORS.primary;
-          data.cell.styles.fontStyle = 'bold';
-        }
-      }
+    uomSplits.slice(0, 5).forEach(uom => {
+      const splitText = `${uom.header}  ->  "${uom.header}" + "${uom.header} UOM"`;
+      doc.text(splitText, 25, yPosition);
+      yPosition += 10;
     });
-
-    if (validationResult.warnings.length > 15) {
-      yPosition = (doc as any).lastAutoTable.finalY + 5;
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'italic');
+    if (uomSplits.length > 5) {
       doc.setTextColor(...COLORS.gray);
-      doc.text(`Showing 15 of ${validationResult.warnings.length} warnings`, 15, yPosition);
+      doc.text(`... and ${uomSplits.length - 5} more`, 25, yPosition);
+      yPosition += 10;
     }
+    yPosition += 5;
+  }
+  
+  // General Recommendations
+  const recommendations: string[] = [];
+  
+  if (!analysisResult.recordIdSuggestion) {
+    recommendations.push('Define a Record ID field - Required for Salsify import');
+  }
+  if (!analysisResult.recordNameSuggestion) {
+    recommendations.push('Define a Record Name field - Recommended for product display');
+  }
+  if (analysisResult.orphanedRecords.length > 0) {
+    recommendations.push(`${analysisResult.orphanedRecords.length} products with missing field values`);
+  }
+  if (uomSplits.length > 0) {
+    recommendations.push(`Split ${uomSplits.length} UOM fields into separate value and unit columns`);
+  }
+  
+  if (recommendations.length > 0) {
+    checkPageBreak(20 + recommendations.length * 10);
+    doc.setFillColor(...COLORS.grayLight);
+    doc.roundedRect(15, yPosition, 180, 14 + recommendations.length * 9, 3, 3, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.primary);
+    doc.text('Action Items', 22, yPosition + 10);
+    yPosition += 16;
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...COLORS.black);
+    recommendations.forEach((rec, i) => {
+      doc.text(`${i + 1}. ${rec}`, 25, yPosition);
+      yPosition += 9;
+    });
+    yPosition += 8;
   } else {
-    doc.setFillColor(220, 252, 231);
-    doc.roundedRect(15, yPosition, 180, 25, 3, 3, 'F');
-    doc.setFontSize(12);
+    doc.setFillColor(...COLORS.successLight);
+    doc.roundedRect(15, yPosition, 180, 18, 3, 3, 'F');
+    doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...COLORS.success);
-    doc.text('No Data Quality Issues Detected', 105, yPosition + 15, { align: 'center' });
-    doc.setTextColor(...COLORS.black);
+    doc.text('✓ All best practices are being followed', 22, yPosition + 12);
+    yPosition += 26;
   }
-
+  
   // ===== FOOTER ON EACH PAGE =====
   const pageCount = doc.getNumberOfPages();
   

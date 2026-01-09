@@ -163,17 +163,159 @@ const Index = () => {
 
 
   const handleSkuLevelForcing = (forcedHeaders: string[]) => {
-    if (headers.length > 0 && data.length > 0) {
-      // Save forced headers
-      setForcedSkuHeaders(forcedHeaders);
-      
-      // Rerun analysis with forced SKU-level headers using runAnalysis for consistency
-      const customThresholds = analysisResult?.thresholds;
-      runAnalysis(headers, data, customThresholds, undefined, forcedHeaders);
-      
+    if (!analysisResult || forcedHeaders.length === 0) return;
+    
+    // Save forced headers
+    setForcedSkuHeaders(forcedHeaders);
+    
+    // CRITICAL: Preserve current hierarchy structure, just move properties to SKU level
+    // Do NOT rerun full analysis - this would lose the selected preset
+    const currentHierarchy = [...analysisResult.hierarchy];
+    
+    if (currentHierarchy.length < 2) {
+      // Flat model - nothing to force
       toast({
-        title: 'SKU-Level Forcing Applied',
-        description: `${forcedHeaders.length} properties forced to SKU-level. Analysis rerun complete.`,
+        title: 'No Action Needed',
+        description: 'All properties are already at SKU-level in this flat model.',
+      });
+      return;
+    }
+    
+    // Get the SKU level (last level)
+    const skuLevel = currentHierarchy[currentHierarchy.length - 1];
+    const forcedSet = new Set(forcedHeaders);
+    
+    console.log('\n🔄 ========== FORCING PROPERTIES TO SKU ==========');
+    console.log(`🔄 Properties to force: ${forcedHeaders.length}`, forcedHeaders);
+    
+    // Remove forced properties from upper levels and add to SKU level
+    for (let i = 0; i < currentHierarchy.length - 1; i++) {
+      const level = currentHierarchy[i];
+      const beforeCount = level.headers.length;
+      
+      // Filter out forced properties from this level
+      const removedProps: string[] = [];
+      level.headers = level.headers.filter((h: string) => {
+        if (forcedSet.has(h)) {
+          removedProps.push(h);
+          return false;
+        }
+        return true;
+      });
+      
+      // Add removed properties to SKU level
+      removedProps.forEach(prop => {
+        if (!skuLevel.headers.includes(prop)) {
+          skuLevel.headers.push(prop);
+        }
+      });
+      
+      if (removedProps.length > 0) {
+        console.log(`🔄 Level ${i + 1}: Moved ${removedProps.length} properties to SKU:`, removedProps);
+      }
+    }
+    
+    console.log(`🔄 SKU level now has ${skuLevel.headers.length} properties`);
+    
+    // ============================================================================
+    // CONSOLIDATION: Merge levels that have too few properties after forcing
+    // Minimum properties per level = 6 (same as analysis engine)
+    // ============================================================================
+    const MIN_PROPERTIES_PER_LEVEL = 6;
+    let consolidatedHierarchy = [...currentHierarchy];
+    let structureChanged = false;
+    
+    // Check mid-levels (not first, not last) for consolidation
+    // Iterate from second-to-last backwards to first+1
+    for (let i = consolidatedHierarchy.length - 2; i > 0; i--) {
+      const level = consolidatedHierarchy[i];
+      const totalProps = level.headers.length + (level.recordId ? 1 : 0) + (level.recordName ? 1 : 0);
+      
+      if (totalProps < MIN_PROPERTIES_PER_LEVEL) {
+        console.log(`🔄 Level ${i + 1} has only ${totalProps} properties (< ${MIN_PROPERTIES_PER_LEVEL}). Merging into SKU level.`);
+        
+        // Move all properties from this level to SKU level
+        const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
+        level.headers.forEach((h: string) => {
+          if (!lastLevel.headers.includes(h)) {
+            lastLevel.headers.push(h);
+          }
+        });
+        
+        // If this level had a Record ID that's not used elsewhere, add it to headers
+        if (level.recordId && level.recordId !== lastLevel.recordId) {
+          if (!lastLevel.headers.includes(level.recordId)) {
+            lastLevel.headers.push(level.recordId);
+          }
+        }
+        
+        // If this level had a Record Name that's not used elsewhere, add it to headers
+        if (level.recordName && level.recordName !== lastLevel.recordName) {
+          if (!lastLevel.headers.includes(level.recordName)) {
+            lastLevel.headers.push(level.recordName);
+          }
+        }
+        
+        // Remove this level from hierarchy
+        consolidatedHierarchy.splice(i, 1);
+        structureChanged = true;
+      }
+    }
+    
+    // Update level numbers after consolidation
+    consolidatedHierarchy = consolidatedHierarchy.map((level, idx) => ({
+      ...level,
+      level: idx + 1,
+    }));
+    
+    if (structureChanged) {
+      console.log(`🔄 Hierarchy consolidated from ${currentHierarchy.length} to ${consolidatedHierarchy.length} levels`);
+    }
+    
+    // Determine new structure name based on level count
+    const newStructureName = consolidatedHierarchy.length === 1 
+      ? 'Flat Model' 
+      : consolidatedHierarchy.length === 2 
+        ? 'Parent-Variant' 
+        : 'Multi-Level';
+    
+    // Update analysis result with modified hierarchy
+    const updatedResult = {
+      ...analysisResult,
+      hierarchy: consolidatedHierarchy,
+    };
+    
+    setAnalysisResult(updatedResult);
+    
+    // Clear selected preset if structure changed
+    if (structureChanged && selectedPreset) {
+      setSelectedPreset(null);
+    }
+    
+    // Rebuild taxonomy tree with updated hierarchy
+    const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
+      ? buildCustomTaxonomyTree(taxonomyConfig, data, headers)
+      : buildTaxonomyTree(consolidatedHierarchy, data, headers);
+    setTaxonomyTree(tree);
+    
+    // Revalidate data
+    const finalSkuLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
+    const hierarchyHeaders = consolidatedHierarchy.flatMap((h: any) => h.headers);
+    const recordId = finalSkuLevel.recordId;
+    const recordName = finalSkuLevel.recordName;
+    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName);
+    setValidationResult(validation);
+    
+    // Show appropriate toast message
+    if (structureChanged) {
+      toast({
+        title: 'Hierarchy Structure Updated',
+        description: `${forcedHeaders.length} properties moved to SKU-level. Structure changed to ${newStructureName} (${consolidatedHierarchy.length} levels).`,
+      });
+    } else {
+      toast({
+        title: 'Properties Moved to SKU-Level',
+        description: `${forcedHeaders.length} properties moved to SKU-level. Hierarchy structure preserved.`,
       });
     }
   };
