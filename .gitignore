@@ -29,3 +29,9 @@ PRESENTATION_*.md
 
 # PDF documentation files (local only)
 pdfs/*.pdf
+
+# Excel files for testing (local only)
+excel_files/
+*.xlsx
+*.xls
+*.csv
