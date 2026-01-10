@@ -26,3 +26,6 @@ dist-ssr
 # Presentation files (local only)
 PRESENTATION_SCRIPT.md
 PRESENTATION_*.md
+
+# PDF documentation files (local only)
+pdfs/*.pdf
