@@ -3,6 +3,16 @@ import autoTable from 'jspdf-autotable';
 import { AnalysisResult } from './analysisEngine';
 import { TaxonomyTreeNode } from './exportReport';
 
+// Extend jsPDF type to include autoTable
+declare module 'jspdf' {
+  interface jsPDF {
+    autoTable: typeof autoTable;
+    lastAutoTable: {
+      finalY: number;
+    };
+  }
+}
+
 // Professional color palette - Executive style
 const COLORS = {
   primary: [30, 64, 175] as [number, number, number],      // Deep Blue
@@ -505,9 +515,11 @@ export const generatePDFReport = (
   if (!analysisResult.recordIdSuggestion) criticalIssues.push('Missing Record ID - Required for Salsify import');
   if (!analysisResult.recordNameSuggestion) criticalIssues.push('Missing Record Name - Recommended for display');
   
-  // Add validation warnings to critical issues (with row numbers)
+  // Add validation warnings to critical issues (EXCLUDE duplicate_header - shown in Best Practices)
   if (validationResult && validationResult.warnings) {
-    const highSeverityWarnings = validationResult.warnings.filter((w: any) => w.severity === 'high');
+    const highSeverityWarnings = validationResult.warnings.filter((w: any) => 
+      w.severity === 'high' && w.type !== 'duplicate_header'
+    );
     highSeverityWarnings.forEach((w: any) => {
       const rowsText = w.affectedRows && w.affectedRows.length > 0 
         ? ` (Rows: ${w.affectedRows.slice(0, 5).join(', ')}${w.affectedRows.length > 5 ? '...' : ''})` 
@@ -550,6 +562,59 @@ export const generatePDFReport = (
   checkPageBreak(60);
   addSectionTitle('Best Practices & Recommendations', COLORS.success);
   
+  // Duplicate Column Names Warning (moved from Action Required for better formatting)
+  const duplicateHeaderWarning = validationResult?.warnings?.find((w: any) => w.type === 'duplicate_header');
+  if (duplicateHeaderWarning) {
+    const examples = duplicateHeaderWarning.examples || [];
+    const boxHeight = 40 + Math.min(examples.length, 5) * 12;
+    checkPageBreak(boxHeight + 10);
+    
+    // Warning box
+    doc.setFillColor(...COLORS.warningLight);
+    doc.roundedRect(15, yPosition, 180, boxHeight, 3, 3, 'F');
+    
+    // Title with icon
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.warning);
+    doc.text('Duplicate Column Names Detected', 22, yPosition + 12);
+    
+    // Badge with count
+    doc.setFillColor(...COLORS.warning);
+    doc.roundedRect(150, yPosition + 5, 40, 14, 2, 2, 'F');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text(`${duplicateHeaderWarning.affectedCount} found`, 155, yPosition + 14);
+    
+    // Description
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.black);
+    doc.text('Only the first occurrence of each duplicated column is analyzed. Data in duplicate columns may be ignored.', 22, yPosition + 24);
+    
+    // Examples
+    yPosition += 32;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.gray);
+    doc.text('Duplicates:', 22, yPosition);
+    yPosition += 8;
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.black);
+    examples.slice(0, 5).forEach((ex: string) => {
+      doc.text(`• ${ex}`, 25, yPosition);
+      yPosition += 10;
+    });
+    if (examples.length > 5) {
+      doc.setTextColor(...COLORS.gray);
+      doc.text(`... and ${examples.length - 5} more`, 25, yPosition);
+      yPosition += 10;
+    }
+    
+    yPosition += 8;
+  }
+  
   // UOM Split Recommendations
   const uomSplits = analysisResult.uomSuggestions.filter(uom => uom.suggestedSplit);
   if (uomSplits.length > 0) {
@@ -587,9 +652,6 @@ export const generatePDFReport = (
   if (!analysisResult.recordNameSuggestion) {
     recommendations.push('Define a Record Name field - Recommended for product display');
   }
-  if (analysisResult.orphanedRecords.length > 0) {
-    recommendations.push(`${analysisResult.orphanedRecords.length} products with missing field values`);
-  }
   if (uomSplits.length > 0) {
     recommendations.push(`Split ${uomSplits.length} UOM fields into separate value and unit columns`);
   }
@@ -612,13 +674,115 @@ export const generatePDFReport = (
       yPosition += 9;
     });
     yPosition += 8;
+  }
+  
+  // ===== INCOMPLETE PRODUCTS SECTION (like in the app) =====
+  if (analysisResult.orphanedRecords.length > 0) {
+    const orphanedCount = analysisResult.orphanedRecords.length;
+    const totalProducts = data.length;
+    const incompletePercent = ((orphanedCount / totalProducts) * 100).toFixed(1);
+    const completeCount = totalProducts - orphanedCount;
+    
+    // Calculate box height based on examples
+    const maxExamples = 3;
+    const exampleHeight = 35; // Height per example row
+    const boxHeight = 70 + Math.min(orphanedCount, maxExamples) * exampleHeight;
+    
+    checkPageBreak(boxHeight + 10);
+    
+    // Main container
+    doc.setFillColor(...COLORS.warningLight);
+    doc.roundedRect(15, yPosition, 180, boxHeight, 3, 3, 'F');
+    
+    // Header with icon and badge
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.warning);
+    doc.text(`${orphanedCount} of ${totalProducts} Products Have Missing Data`, 22, yPosition + 12);
+    
+    // Badge
+    doc.setFillColor(...COLORS.warning);
+    doc.roundedRect(165, yPosition + 5, 25, 12, 2, 2, 'F');
+    doc.setFontSize(7);
+    doc.setTextColor(255, 255, 255);
+    doc.text('DATA QUALITY', 167, yPosition + 13);
+    
+    // Subtitle
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.gray);
+    doc.text(`${incompletePercent}% incomplete. Missing data.`, 22, yPosition + 22);
+    
+    // Impact box
+    yPosition += 28;
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(20, yPosition, 170, 16, 2, 2, 'F');
+    doc.setDrawColor(...COLORS.grayMedium);
+    doc.rect(20, yPosition, 170, 16);
+    
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.black);
+    doc.text('Impact:', 25, yPosition + 6);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${completeCount} products OK. ${orphanedCount} need data completion.`, 25, yPosition + 13);
+    
+    // Examples section
+    yPosition += 22;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.gray);
+    doc.text('Examples / Actions:', 22, yPosition);
+    yPosition += 6;
+    
+    // Show up to 3 examples with missing fields - use autoTable for consistent styling
+    const exampleRows = analysisResult.orphanedRecords.slice(0, maxExamples).map((orphan: any, idx: number) => {
+      const rowNum = orphan.rowIndex !== undefined ? orphan.rowIndex + 2 : idx + 2;
+      const missingFields = orphan.issues 
+        ? orphan.issues.map((issue: string) => issue.replace('Missing value for hierarchy field: ', '').replace('Missing value for: ', '')).slice(0, 8).join(', ')
+        : 'Multiple fields';
+      return [`Row ${rowNum}`, `Missing: ${missingFields}${orphan.issues && orphan.issues.length > 8 ? '...' : ''}`];
+    });
+    
+    autoTable(doc, {
+      startY: yPosition,
+      head: [],
+      body: exampleRows,
+      theme: 'plain',
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        textColor: COLORS.black,
+        font: 'helvetica',
+      },
+      columnStyles: {
+        0: { cellWidth: 25, fontStyle: 'bold', textColor: COLORS.warning },
+        1: { cellWidth: 145 },
+      },
+      margin: { left: 22, right: 22 },
+      tableWidth: 170,
+    });
+    
+    yPosition = doc.lastAutoTable.finalY + 5;
+    
+    if (orphanedCount > maxExamples) {
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(...COLORS.gray);
+      doc.text(`... and ${orphanedCount - maxExamples} more products with missing data`, 22, yPosition);
+      yPosition += 8;
+    }
+    
+    yPosition += 10;
   } else {
+    // All products complete
+    checkPageBreak(25);
     doc.setFillColor(...COLORS.successLight);
     doc.roundedRect(15, yPosition, 180, 18, 3, 3, 'F');
     doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...COLORS.success);
-    doc.text('✓ All best practices are being followed', 22, yPosition + 12);
+    doc.text('✓ All products have complete data', 22, yPosition + 12);
     yPosition += 26;
   }
   

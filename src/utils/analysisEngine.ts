@@ -690,35 +690,34 @@ const determineHierarchy = (
   // 10  = Sparse attribute - Low completeness (NEVER top-level)
   
   // ============================================================================
-  // SIMPLIFIED HIERARCHY: Favor 2-level models (Parent + SKU)
-  // Only create Level 2 if there's clear separation in the data
+  // FLEXIBLE HIERARCHY: More tolerant initial analysis
+  // Presets will still enforce stricter criteria when selected
   // ============================================================================
   
-  // Level 1: STRICT criteria - High hierarchy score (≥75) + high completeness (≥85%)
-  // These are true taxonomy/category properties (Brand, Category, Product Type)
+  // Level 1: TOLERANT criteria - Accept lower completeness (≥60%) and hierarchyScore (≥50)
+  // This allows more data patterns to be detected as hierarchical
   const level1Headers = sortedScores
-    .filter((score) => score.hierarchyScore >= 75 && score.completeness >= 0.85)
+    .filter((score) => score.hierarchyScore >= 50 && score.completeness >= 0.60 && score.cardinality <= 0.30)
     .map((score) => score.header);
 
-  // Level 2: VERY STRICT - Only create if data has clear mid-level structure
-  // Must have high completeness (≥80%) AND mid-range hierarchy score (50-75)
-  // This prevents creating unnecessary 3-level hierarchies
+  // Level 2: TOLERANT - Accept mid-level properties with moderate completeness
+  // Lower thresholds to capture more potential hierarchy structures
   const level2Headers = sortedScores
     .filter((score) => 
-      score.hierarchyScore >= 50 && 
-      score.hierarchyScore < 75 && 
-      score.completeness >= 0.80 &&
-      score.cardinality < 0.5  // Not too unique - should have repetition
+      score.hierarchyScore >= 25 && 
+      score.hierarchyScore < 50 && 
+      score.completeness >= 0.50 &&
+      score.cardinality < 0.70  // More tolerant cardinality threshold
     )
     .map((score) => score.header);
 
-  // SKU Level: Everything else - low hierarchy score OR high uniqueness OR incomplete data
+  // SKU Level: Everything else - very low hierarchy score OR very high uniqueness OR sparse data
   // Includes: logistics, dates, technical specs, item-level attributes
   const skuHeaders = sortedScores
     .filter((score) => 
-      score.hierarchyScore < 50 ||  // Low hierarchy score
-      score.cardinality >= 0.5 ||   // High uniqueness
-      score.completeness < 0.80     // Incomplete data
+      score.hierarchyScore < 25 ||  // Very low hierarchy score
+      score.cardinality >= 0.70 ||   // High uniqueness
+      score.completeness < 0.50     // Sparse data
     )
     .map((score) => score.header);
 
@@ -1724,7 +1723,10 @@ const generateHierarchyPresets = (
   // This allows 3-level option even when initial analysis consolidated to 2 levels
   
   // Use original score-based classification to check if 3-level makes sense
-  const hasEnoughForMultiLevel = topLevel.length >= 3 && midLevel.length >= 1;
+  // MORE TOLERANT: Only need some top-level AND (mid-level OR variant-level) properties
+  const hasEnoughForMultiLevel = topLevel.length >= 2 && (midLevel.length >= 1 || variantLevel.length >= 3);
+  
+  console.log(`🔍 [generateHierarchyPresets] Multi-Level check: topLevel=${topLevel.length}, midLevel=${midLevel.length}, variantLevel=${variantLevel.length}, hasEnough=${hasEnoughForMultiLevel}`);
   
   if (hasEnoughForMultiLevel) {
     const usedInPresetC = new Set<string>();
@@ -1733,8 +1735,10 @@ const generateHierarchyPresets = (
     // Use Level 1 from actual hierarchy (preserves item-level field filtering)
     const familyHeaders = actualLevel1Headers;
     
-    // Level 2 (Model): Use mid-level properties from original classification
-    const modelHeaders = midLevel.map(s => s.header).filter(h => !actualLevel1Headers.includes(h));
+    // Level 2 (Model): Use mid-level OR variant-level properties from original classification
+    // If midLevel is empty, use variantLevel as fallback
+    const modelCandidates = midLevel.length > 0 ? midLevel : variantLevel.slice(0, Math.ceil(variantLevel.length / 2));
+    const modelHeaders = modelCandidates.map(s => s.header).filter(h => !actualLevel1Headers.includes(h));
     
     // Level 3 (SKU): Everything else
     const variantSkuHeaders = actualSkuHeaders.filter(h => 

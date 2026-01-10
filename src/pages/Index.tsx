@@ -64,7 +64,14 @@ const Index = () => {
       const extractedHeaders = (jsonData[0] as string[]).map(h => 
         h ? h.toString().trim() : ''
       );
-      const extractedData = jsonData.slice(1);
+      
+      // CRITICAL: Filter out completely empty rows from Excel (trailing empty rows)
+      const rawData = jsonData.slice(1);
+      const extractedData = rawData.filter((row: any[]) => 
+        row && row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')
+      );
+      
+      console.log(`📊 Data loaded: ${rawData.length} raw rows → ${extractedData.length} non-empty rows`);
       
       // Check for duplicate headers and warn user with details
       const headerPositions = new Map<string, number[]>();
@@ -145,13 +152,15 @@ const Index = () => {
     setTaxonomyTree(tree);
 
     // Validate data quality with Salsify compliance checks
+    // CRITICAL: Pass allHeaders to detect duplicate column names in original file
     const hierarchyHeaders = result.hierarchy.flatMap(h => h.headers);
     const validation = validateData(
       headersToAnalyze, 
       dataToAnalyze, 
       hierarchyHeaders,
       result.recordIdSuggestion || undefined,
-      result.recordNameSuggestion || undefined
+      result.recordNameSuggestion || undefined,
+      allHeaders // Original headers including duplicates
     );
     setValidationResult(validation);
 
@@ -220,39 +229,55 @@ const Index = () => {
     // ============================================================================
     // CONSOLIDATION: Merge levels that have too few properties after forcing
     // Minimum properties per level = 6 (same as analysis engine)
+    // CRITICAL: NEVER lose data - all properties must be accounted for
     // ============================================================================
     const MIN_PROPERTIES_PER_LEVEL = 6;
     let consolidatedHierarchy = [...currentHierarchy];
     let structureChanged = false;
     
-    // Check mid-levels (not first, not last) for consolidation
-    // Iterate from second-to-last backwards to first+1
-    for (let i = consolidatedHierarchy.length - 2; i > 0; i--) {
+    // SAFETY: Count all properties BEFORE consolidation
+    const allPropsBefore = new Set<string>();
+    consolidatedHierarchy.forEach(level => {
+      level.headers.forEach((h: string) => allPropsBefore.add(h));
+      if (level.recordId) allPropsBefore.add(level.recordId);
+      if (level.recordName) allPropsBefore.add(level.recordName);
+    });
+    console.log(`🔄 Total unique properties BEFORE consolidation: ${allPropsBefore.size}`);
+    
+    // Check ALL non-last levels for consolidation (including Level 1)
+    // Iterate from second-to-last backwards to first (index 0)
+    for (let i = consolidatedHierarchy.length - 2; i >= 0; i--) {
       const level = consolidatedHierarchy[i];
       const totalProps = level.headers.length + (level.recordId ? 1 : 0) + (level.recordName ? 1 : 0);
       
-      if (totalProps < MIN_PROPERTIES_PER_LEVEL) {
-        console.log(`🔄 Level ${i + 1} has only ${totalProps} properties (< ${MIN_PROPERTIES_PER_LEVEL}). Merging into SKU level.`);
+      // Only consolidate if we have more than 1 level remaining
+      if (totalProps < MIN_PROPERTIES_PER_LEVEL && consolidatedHierarchy.length > 1) {
+        console.log(`🔄 Level ${i + 1} has only ${totalProps} properties (< ${MIN_PROPERTIES_PER_LEVEL}). Merging into next level.`);
         
-        // Move all properties from this level to SKU level
-        const lastLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
+        // Move all properties from this level to next level (or SKU level if this is Level 1)
+        const targetLevel = consolidatedHierarchy[i + 1] || consolidatedHierarchy[consolidatedHierarchy.length - 1];
+        
+        // CRITICAL: Move ALL headers to target level
         level.headers.forEach((h: string) => {
-          if (!lastLevel.headers.includes(h)) {
-            lastLevel.headers.push(h);
+          if (!targetLevel.headers.includes(h)) {
+            targetLevel.headers.push(h);
+            console.log(`🔄 Moved header "${h}" to level ${i + 2}`);
           }
         });
         
-        // If this level had a Record ID that's not used elsewhere, add it to headers
-        if (level.recordId && level.recordId !== lastLevel.recordId) {
-          if (!lastLevel.headers.includes(level.recordId)) {
-            lastLevel.headers.push(level.recordId);
+        // CRITICAL: If this level had a Record ID that's not used elsewhere, add it to headers
+        if (level.recordId && level.recordId !== targetLevel.recordId && level.recordId !== targetLevel.recordName) {
+          if (!targetLevel.headers.includes(level.recordId)) {
+            targetLevel.headers.push(level.recordId);
+            console.log(`🔄 Moved Record ID "${level.recordId}" to level ${i + 2} headers`);
           }
         }
         
-        // If this level had a Record Name that's not used elsewhere, add it to headers
-        if (level.recordName && level.recordName !== lastLevel.recordName) {
-          if (!lastLevel.headers.includes(level.recordName)) {
-            lastLevel.headers.push(level.recordName);
+        // CRITICAL: If this level had a Record Name that's not used elsewhere, add it to headers
+        if (level.recordName && level.recordName !== targetLevel.recordId && level.recordName !== targetLevel.recordName) {
+          if (!targetLevel.headers.includes(level.recordName)) {
+            targetLevel.headers.push(level.recordName);
+            console.log(`🔄 Moved Record Name "${level.recordName}" to level ${i + 2} headers`);
           }
         }
         
@@ -267,6 +292,34 @@ const Index = () => {
       ...level,
       level: idx + 1,
     }));
+    
+    // ============================================================================
+    // SAFETY NET: Verify NO properties were lost during consolidation
+    // ============================================================================
+    const allPropsAfter = new Set<string>();
+    consolidatedHierarchy.forEach(level => {
+      level.headers.forEach((h: string) => allPropsAfter.add(h));
+      if (level.recordId) allPropsAfter.add(level.recordId);
+      if (level.recordName) allPropsAfter.add(level.recordName);
+    });
+    console.log(`🔄 Total unique properties AFTER consolidation: ${allPropsAfter.size}`);
+    
+    // Check for missing properties
+    const missingProps = Array.from(allPropsBefore).filter(p => !allPropsAfter.has(p));
+    if (missingProps.length > 0) {
+      console.error(`❌ CRITICAL: ${missingProps.length} properties were LOST during consolidation:`, missingProps);
+      
+      // RECOVERY: Add missing properties to SKU level
+      const skuLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
+      missingProps.forEach(prop => {
+        if (!skuLevel.headers.includes(prop) && prop !== skuLevel.recordId && prop !== skuLevel.recordName) {
+          skuLevel.headers.push(prop);
+          console.log(`✅ RECOVERED: Added missing property "${prop}" to SKU level`);
+        }
+      });
+    } else {
+      console.log(`✅ SUCCESS: All properties accounted for after consolidation`);
+    }
     
     if (structureChanged) {
       console.log(`🔄 Hierarchy consolidated from ${currentHierarchy.length} to ${consolidatedHierarchy.length} levels`);
@@ -299,11 +352,12 @@ const Index = () => {
     setTaxonomyTree(tree);
     
     // Revalidate data
+    // CRITICAL: Pass allHeaders to detect duplicate column names
     const finalSkuLevel = consolidatedHierarchy[consolidatedHierarchy.length - 1];
     const hierarchyHeaders = consolidatedHierarchy.flatMap((h: any) => h.headers);
     const recordId = finalSkuLevel.recordId;
     const recordName = finalSkuLevel.recordName;
-    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName);
+    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName, allHeaders);
     setValidationResult(validation);
     
     // Show appropriate toast message
@@ -402,10 +456,11 @@ const Index = () => {
     setTaxonomyTree(tree);
     
     // Revalidate data with Salsify compliance checks
+    // CRITICAL: Pass allHeaders to detect duplicate column names
     const hierarchyHeaders = preset.hierarchy.flatMap((h: any) => h.headers);
     const recordId = preset.hierarchy[preset.hierarchy.length - 1]?.recordId;
     const recordName = preset.hierarchy[preset.hierarchy.length - 1]?.recordName;
-    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName);
+    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName, allHeaders);
     setValidationResult(validation);
     
     toast({

@@ -1,9 +1,10 @@
 export interface DataValidationWarning {
-  type: 'duplicate' | 'inconsistency' | 'normalization' | 'outlier' | 'missing_hierarchy' | 'salsify_compliance';
+  type: 'duplicate' | 'inconsistency' | 'normalization' | 'outlier' | 'missing_hierarchy' | 'salsify_compliance' | 'duplicate_header';
   severity: 'low' | 'medium' | 'high';
   title: string;
   message: string;
   affectedRows: number[];
+  affectedColumns?: number[]; // For duplicate headers - column indices
   affectedCount: number;
   suggestion: string;
   examples?: string[];
@@ -37,9 +38,14 @@ export const validateData = (
   data: any[][],
   hierarchyHeaders: string[],
   recordIdField?: string,
-  recordNameField?: string
+  recordNameField?: string,
+  allHeaders?: string[] // Original headers including duplicates
 ): ValidationResult => {
   const warnings: DataValidationWarning[] = [];
+
+  // 0. CRITICAL: Detect duplicate column headers FIRST
+  const duplicateHeaderWarnings = detectDuplicateHeaders(allHeaders || headers);
+  warnings.push(...duplicateHeaderWarnings);
 
   // 1. SALSIFY COMPLIANCE: Record ID validation
   const recordIdWarnings = validateRecordId(headers, data, recordIdField);
@@ -72,6 +78,51 @@ export const validateData = (
     totalIssues: warnings.length,
     criticalIssues,
   };
+};
+
+/**
+ * Detect duplicate column headers in the Excel file
+ * This is CRITICAL because Excel allows duplicate headers but only first occurrence is analyzed
+ */
+const detectDuplicateHeaders = (headers: string[]): DataValidationWarning[] => {
+  const warnings: DataValidationWarning[] = [];
+  
+  // Build map of header -> column indices (1-indexed for user)
+  const headerPositions = new Map<string, number[]>();
+  headers.forEach((h, idx) => {
+    const normalizedHeader = h?.toString().trim() || '';
+    if (!headerPositions.has(normalizedHeader)) {
+      headerPositions.set(normalizedHeader, []);
+    }
+    headerPositions.get(normalizedHeader)!.push(idx + 1); // 1-indexed column number
+  });
+  
+  // Find duplicates
+  const duplicates = Array.from(headerPositions.entries())
+    .filter(([name, positions]) => name !== '' && positions.length > 1);
+  
+  if (duplicates.length > 0) {
+    const examples = duplicates.slice(0, 5).map(([name, positions]) => 
+      `"${name}" in columns ${positions.join(', ')}`
+    );
+    
+    const allAffectedColumns = duplicates.flatMap(([_, positions]) => positions);
+    
+    warnings.push({
+      type: 'duplicate_header',
+      severity: 'high',
+      title: `Duplicate Column Names (${duplicates.length} found)`,
+      message: `${duplicates.length} column name${duplicates.length > 1 ? 's appear' : ' appears'} multiple times. Only the FIRST occurrence of each is analyzed. Data in duplicate columns may be IGNORED.`,
+      affectedRows: [],
+      affectedColumns: allAffectedColumns,
+      affectedCount: duplicates.length,
+      suggestion: 'Rename duplicate columns in your Excel file to ensure all data is analyzed. Each column should have a unique name.',
+      examples,
+      salsifyRule: 'Each property must have a unique name for proper import mapping',
+    });
+  }
+  
+  return warnings;
 };
 
 /**
