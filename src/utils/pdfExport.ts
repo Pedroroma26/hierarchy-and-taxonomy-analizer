@@ -120,7 +120,6 @@ export const generatePDFReport = (
   doc.text('Product Data Model Analysis', 105, 22, { align: 'center' });
   doc.setFontSize(11);
   doc.setFont('helvetica', 'normal');
-  doc.text('Executive Summary Report', 105, 32, { align: 'center' });
   
   // Report metadata
   const reportDate = new Date().toLocaleDateString('en-US', {
@@ -286,7 +285,6 @@ export const generatePDFReport = (
   yPosition = 25;
   
   addSectionTitle('Product Taxonomy');
-  addSubtitle('Category structure derived from your data');
   
   // Taxonomy Properties Legend
   const taxonomyProps = taxonomyTree.taxonomyProperties || [];
