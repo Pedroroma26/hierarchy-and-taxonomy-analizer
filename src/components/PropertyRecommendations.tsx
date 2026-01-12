@@ -121,7 +121,7 @@ export const PropertyRecommendations = ({
               </Badge>
             </div>
             <p className="text-muted-foreground">
-              Data type suggestions and optimization opportunities
+              Data type suggestions
             </p>
           </div>
 

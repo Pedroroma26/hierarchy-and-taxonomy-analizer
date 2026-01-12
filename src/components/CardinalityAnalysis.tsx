@@ -81,7 +81,7 @@ export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisP
               </p>
               <div className="flex gap-2 items-center flex-wrap">
                 <Badge className="bg-blue-500 text-white text-xs px-2 py-1">Level 1: Parent</Badge>
-                <Badge className="bg-green-500 text-white text-xs px-2 py-1">Level 2: Child/Variant</Badge>
+                <Badge className="bg-green-500 text-white text-xs px-2 py-1">Level 2: Variant</Badge>
                 <Badge className="bg-red-500 text-white text-xs px-2 py-1">Level 3: SKU</Badge>
               </div>
             </div>

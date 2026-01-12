@@ -78,7 +78,7 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
               </Badge>
             </div>
             <p className="text-muted-foreground">
-              Data inheritance structure based on cardinality analysis
+              Data hierarchy structure
             </p>
           </div>
 

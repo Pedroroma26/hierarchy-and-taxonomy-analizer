@@ -135,7 +135,7 @@ export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationPro
                 Taxonomy Tree
               </h2>
               <p className="text-muted-foreground">
-                Complete product hierarchy visualization
+                Complete product taxonomy visualization
               </p>
             </div>
           </div>

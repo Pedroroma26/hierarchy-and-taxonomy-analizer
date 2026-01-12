@@ -748,7 +748,7 @@ const determineHierarchy = (
   // Build hierarchy based on cardinality distribution
   // High Repetition (Low Cardinality) = Parent Levels
   // Medium Repetition = Middle/Variant Levels  
-  // High Uniqueness (High Cardinality) = SKU-Level Properties
+  // High Uniqueness (High Cardinality) = Variant
   
   // Helper: Check if field has good data representation (not too many empty values)
   const hasGoodRepresentation = (header: string): boolean => {
@@ -987,7 +987,7 @@ const determineHierarchy = (
   // Add Level 1 (Parent/Taxonomy) if exists AND has enough properties
   if (level1Headers.length >= minPropertiesPerLevel) {
     hierarchyLevels.push({
-      name: 'Parent Level (Taxonomy)',
+      name: 'Parent',
       headers: [...level1Headers],
       isLowest: false,
     });
@@ -1001,7 +1001,7 @@ const determineHierarchy = (
   const level2Combined = [...orphanedHeaders, ...level2Headers];
   if (level2Combined.length >= minPropertiesPerLevel) {
     hierarchyLevels.push({
-      name: hierarchyLevels.length === 0 ? 'Parent Level (Taxonomy)' : 'SKU-Level Properties',
+      name: hierarchyLevels.length === 0 ? 'Parent' : 'Variant',
       headers: level2Combined,
       isLowest: false,
     });
@@ -1042,7 +1042,7 @@ const determineHierarchy = (
   }
   
   hierarchyLevels.push({
-    name: 'SKU-Level Properties',
+    name: 'Variant',
     headers: [...orphanedHeaders, ...skuHeaders],
     isLowest: true,
   });
@@ -1419,7 +1419,7 @@ const determineHierarchy = (
     level.level = index + 1;
     // Update name for last level
     if (index === finalHierarchy.length - 1) {
-      level.name = 'SKU-Level Properties';
+      level.name = 'Variant';
     }
   });
   
@@ -1698,14 +1698,14 @@ const generateHierarchyPresets = (
       hierarchy: [
         {
           level: 1,
-          name: 'Parent Level (Taxonomy)',
+          name: 'Parent',
           headers: level1HeadersClean,
           recordId: level1RecordId,
           recordName: level1RecordName,
         },
         {
           level: 2,
-          name: 'SKU-Level Properties',
+          name: 'Variant',
           headers: level2HeadersClean,
           recordId: level2RecordId,
           recordName: level2RecordName,
@@ -1713,7 +1713,7 @@ const generateHierarchyPresets = (
       ],
       properties: [],
       confidence: 0.85,  // High confidence - matches initial analysis
-      reasoning: '2-level structure (RECOMMENDED). Matches initial analysis distribution. Parent taxonomy → SKU-level details.',
+      reasoning: '2-level structure. Parent → Varaint.',
       modelType: 'hierarchical',
     });
   }
@@ -1796,7 +1796,7 @@ const generateHierarchyPresets = (
       ],
       properties: [],
       confidence: 0.70,  // Lower confidence than 2-level (we favor 2-level)
-      reasoning: '3-level structure. Family → Model → Variant. Use when you need an intermediate grouping level.',
+      reasoning: '3-level structure. Family → Model → Variant.',
       modelType: 'hierarchical',
     });
   }

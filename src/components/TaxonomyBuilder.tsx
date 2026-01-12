@@ -101,7 +101,7 @@ export const TaxonomyBuilder = ({
               )}
             </div>
             <p className="text-muted-foreground">
-              Configure custom taxonomy tree structure (optional)
+              Configure custom taxonomy (optional)
             </p>
           </div>
 

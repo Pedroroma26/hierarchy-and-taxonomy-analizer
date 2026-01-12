@@ -294,7 +294,7 @@ export const SkuLevelForcing = ({ headers, currentHierarchy, onApply }: SkuLevel
               </Badge>
             </div>
             <p className="text-muted-foreground mt-2">
-              Select property groups or individual properties to force to the SKU-level (lowest level) in the hierarchy
+              Select property groups or individual properties to force to the lowest level in the hierarchy
             </p>
           </div>
 

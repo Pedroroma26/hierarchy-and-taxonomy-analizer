@@ -47,7 +47,7 @@ export const PresetSelector = ({ presets, onSelectPreset, selectedPreset }: Pres
         <div>
           <h3 className="text-lg font-semibold mb-2">Select Hierarchy Structure</h3>
           <p className="text-sm text-muted-foreground">
-            Choose a preset structure based on your PIM requirements. The analysis automatically recommends the best option.
+            Choose a preset structure. The analysis automatically recommends the best option.
           </p>
         </div>
 

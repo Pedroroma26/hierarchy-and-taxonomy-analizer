@@ -317,7 +317,7 @@ export const mapPropertiesToHierarchy = (
     });
   });
 
-  // Map SKU-level properties
+  // Map Variant
   properties.forEach(prop => {
     const recommendation = propertyRecommendations.find(r => r.header === prop);
     mappings.push({
