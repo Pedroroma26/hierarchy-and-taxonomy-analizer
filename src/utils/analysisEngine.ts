@@ -1772,16 +1772,14 @@ const generateHierarchyPresets = (
   }
   
   // PRESET C: Multi-Level PIM (3 Levels: Family → Model → Variant)
-  // CRITICAL: Generate based on ORIGINAL classification (before consolidation)
-  // This allows 3-level option even when initial analysis consolidated to 2 levels
+  // CRITICAL: ALWAYS generate Multi-Level preset
+  // User requested to always have this option available, even if it doesn't make statistical sense
+  // The user can decide if they want to use it or not
   
-  // Use original score-based classification to check if 3-level makes sense
-  // MORE TOLERANT: Only need some top-level AND (mid-level OR variant-level) properties
-  const hasEnoughForMultiLevel = topLevel.length >= 2 && (midLevel.length >= 1 || variantLevel.length >= 3);
+  console.log(`🔍 [generateHierarchyPresets] Multi-Level check: topLevel=${topLevel.length}, midLevel=${midLevel.length}, variantLevel=${variantLevel.length}`);
+  console.log(`🔍 [generateHierarchyPresets] ALWAYS generating Multi-Level preset (user preference)`);
   
-  console.log(`🔍 [generateHierarchyPresets] Multi-Level check: topLevel=${topLevel.length}, midLevel=${midLevel.length}, variantLevel=${variantLevel.length}, hasEnough=${hasEnoughForMultiLevel}`);
-  
-  if (hasEnoughForMultiLevel) {
+  {
     const usedInPresetC = new Set<string>();
     const usedNamesInPresetC: string[] = [];
     
@@ -1789,14 +1787,28 @@ const generateHierarchyPresets = (
     const familyHeaders = actualLevel1Headers;
     
     // Level 2 (Model): Use mid-level OR variant-level properties from original classification
-    // If midLevel is empty, use variantLevel as fallback
-    const modelCandidates = midLevel.length > 0 ? midLevel : variantLevel.slice(0, Math.ceil(variantLevel.length / 2));
-    const modelHeaders = modelCandidates.map(s => s.header).filter(h => !actualLevel1Headers.includes(h));
+    // If both are empty, split SKU headers into two levels
+    let modelHeaders: string[] = [];
+    let variantSkuHeaders: string[] = [];
     
-    // Level 3 (SKU): Everything else
-    const variantSkuHeaders = actualSkuHeaders.filter(h => 
-      !familyHeaders.includes(h) && !modelHeaders.includes(h)
-    );
+    if (midLevel.length > 0) {
+      // Use mid-level candidates
+      modelHeaders = midLevel.map(s => s.header).filter(h => !actualLevel1Headers.includes(h));
+      variantSkuHeaders = actualSkuHeaders.filter(h => !familyHeaders.includes(h) && !modelHeaders.includes(h));
+    } else if (variantLevel.length > 0) {
+      // Use first half of variant-level as Model
+      const halfVariant = variantLevel.slice(0, Math.ceil(variantLevel.length / 2));
+      modelHeaders = halfVariant.map(s => s.header).filter(h => !actualLevel1Headers.includes(h));
+      variantSkuHeaders = actualSkuHeaders.filter(h => !familyHeaders.includes(h) && !modelHeaders.includes(h));
+    } else {
+      // FALLBACK: Split SKU headers into two levels (first 20% for Model, rest for Variant)
+      const skuOnlyHeaders = actualSkuHeaders.filter(h => !familyHeaders.includes(h));
+      const splitPoint = Math.max(6, Math.ceil(skuOnlyHeaders.length * 0.2)); // At least 6 properties for Model
+      modelHeaders = skuOnlyHeaders.slice(0, splitPoint);
+      variantSkuHeaders = skuOnlyHeaders.slice(splitPoint);
+    }
+    
+    console.log(`🔍 [Multi-Level] Model headers: ${modelHeaders.length}, Variant headers: ${variantSkuHeaders.length}`);
     
     // Level 1: Family - Use actual hierarchy Level 1
     const fam1RecordId = actualHierarchy[0]?.recordId || findRecordIdForPreset(familyHeaders, false);

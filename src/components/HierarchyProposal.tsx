@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronRight, ChevronDown, Database, Layers, Tag, Pencil, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Database, Layers, Tag, Pencil, Check, X, ArrowUpDown } from 'lucide-react';
 import { HierarchyLevel } from '@/types';
 import {
   Select,
@@ -25,6 +25,7 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
   const [isExpanded, setIsExpanded] = useState(true);
   const [editingLevel, setEditingLevel] = useState<number | null>(null);
   const [editingField, setEditingField] = useState<'recordId' | 'recordName' | null>(null);
+  const [movingProperty, setMovingProperty] = useState<{ property: string; fromLevel: number } | null>(null);
 
   // Get all properties from all levels (headers + recordId + recordName)
   const getAllProperties = () => {
@@ -145,6 +146,37 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
   const cancelEditing = () => {
     setEditingLevel(null);
     setEditingField(null);
+  };
+
+  // Handle moving a property from one level to another
+  const handleMoveProperty = (property: string, fromLevelIndex: number, toLevelIndex: number) => {
+    if (!onHierarchyChange || fromLevelIndex === toLevelIndex) return;
+    
+    const newHierarchy = JSON.parse(JSON.stringify(hierarchy)) as HierarchyLevel[];
+    const sourceLevel = newHierarchy[fromLevelIndex];
+    const targetLevel = newHierarchy[toLevelIndex];
+    
+    // Remove property from source level
+    sourceLevel.headers = sourceLevel.headers.filter((h: string) => h !== property);
+    
+    // Add property to target level (if not already there)
+    if (!targetLevel.headers.includes(property)) {
+      targetLevel.headers.push(property);
+    }
+    
+    // Close moving mode
+    setMovingProperty(null);
+    
+    // Notify parent
+    onHierarchyChange(newHierarchy);
+  };
+
+  const startMoving = (property: string, fromLevel: number) => {
+    setMovingProperty({ property, fromLevel });
+  };
+
+  const cancelMoving = () => {
+    setMovingProperty(null);
   };
 
   const getLevelIcon = (level: number) => {
@@ -378,13 +410,53 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
                     
                     <div className="flex flex-wrap gap-2">
                       {level.headers.map((header) => (
-                        <Badge 
-                          key={header} 
-                          variant="outline"
-                          className="bg-background/20 border-background/30"
-                        >
-                          {header}
-                        </Badge>
+                        <div key={header} className="relative group">
+                          {movingProperty?.property === header && movingProperty?.fromLevel === index ? (
+                            // Show level selector when moving this property
+                            <div className="flex items-center gap-1 bg-white rounded-md p-1 shadow-md">
+                              <span className="text-xs text-gray-700 px-1">{header}</span>
+                              <Select
+                                onValueChange={(value) => handleMoveProperty(header, index, parseInt(value))}
+                              >
+                                <SelectTrigger className="h-6 w-[100px] text-xs bg-white text-gray-900 border-gray-300">
+                                  <SelectValue placeholder="Move to..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {hierarchy.map((lvl, lvlIndex) => (
+                                    lvlIndex !== index && (
+                                      <SelectItem key={lvl.level} value={lvlIndex.toString()} className="text-xs">
+                                        L{lvl.level}: {lvl.name}
+                                      </SelectItem>
+                                    )
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <button
+                                onClick={cancelMoving}
+                                className="p-1 hover:bg-gray-100 rounded"
+                              >
+                                <X className="w-3 h-3 text-gray-600" />
+                              </button>
+                            </div>
+                          ) : (
+                            // Normal badge with move button on hover
+                            <Badge 
+                              variant="outline"
+                              className="bg-background/20 border-background/30 pr-1 flex items-center gap-1"
+                            >
+                              {header}
+                              {onHierarchyChange && hierarchy.length > 1 && (
+                                <button
+                                  onClick={() => startMoving(header, index)}
+                                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-background/50 rounded transition-opacity"
+                                  title="Move to another level"
+                                >
+                                  <ArrowUpDown className="w-3 h-3" />
+                                </button>
+                              )}
+                            </Badge>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </Card>

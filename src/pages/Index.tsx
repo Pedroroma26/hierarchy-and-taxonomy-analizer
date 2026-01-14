@@ -663,6 +663,7 @@ const Index = () => {
             />
           )}
 
+          
           {!showHeaderSelection && data.length > 0 && (
             <>
               <DataPreview headers={headers} data={data} />
