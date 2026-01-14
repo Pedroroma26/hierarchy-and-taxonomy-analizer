@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ interface SkuLevelForcingProps {
   headers: string[];
   currentHierarchy: HierarchyLevel[];
   onApply: (forcedHeaders: string[]) => void;
+  resetKey?: number; // When this changes, reset internal state
 }
 
 // Property groups with detection keywords
@@ -151,11 +152,21 @@ const propertyGroups = {
   }
 };
 
-export const SkuLevelForcing = ({ headers, currentHierarchy, onApply }: SkuLevelForcingProps) => {
+export const SkuLevelForcing = ({ headers, currentHierarchy, onApply, resetKey }: SkuLevelForcingProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [manuallySelected, setManuallySelected] = useState<Set<string>>(new Set());
   const [excludedFromGroups, setExcludedFromGroups] = useState<Set<string>>(new Set());
+
+  // Reset internal state when resetKey changes (e.g., when preset changes)
+  useEffect(() => {
+    if (resetKey !== undefined) {
+      console.log('🔄 SkuLevelForcing: Resetting internal state due to preset change');
+      setSelectedGroups(new Set());
+      setManuallySelected(new Set());
+      setExcludedFromGroups(new Set());
+    }
+  }, [resetKey]);
 
   // Get properties currently NOT in SKU-level (lowest level)
   // These are the ONLY properties that should be available for forcing

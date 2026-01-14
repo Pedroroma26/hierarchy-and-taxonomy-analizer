@@ -93,11 +93,6 @@ export const PropertyRecommendations = ({
     }
   };
 
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return 'bg-green-500/20 text-green-700 dark:text-green-300';
-    if (confidence >= 0.6) return 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-300';
-    return 'bg-orange-500/20 text-orange-700 dark:text-orange-300';
-  };
 
   return (
     <motion.div
@@ -131,12 +126,12 @@ export const PropertyRecommendations = ({
           <div>
             <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
               <Hash className="w-5 h-5" />
-              Record ID & Name Recommendations by Level
+              Record ID & Name by Level
             </h3>
             <div className="space-y-3">
-              {filteredSuggestions.map((suggestion, index) => (
+              {hierarchy.map((level, index) => (
                 <motion.div
-                  key={suggestion.level}
+                  key={level.level}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
@@ -144,51 +139,45 @@ export const PropertyRecommendations = ({
                 >
                   <div className="mb-3">
                     <h4 className="font-medium text-sm text-muted-foreground mb-1">
-                      Level {suggestion.level}: {suggestion.levelName}
+                      Level {level.level}: {level.name}
                     </h4>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Record ID */}
+                    {/* Record ID - Show actual property name */}
                     <div>
                       <div className="flex items-center gap-2 mb-2">
                         <Hash className="w-4 h-4 text-primary" />
                         <span className="text-sm font-semibold">Record ID</span>
                       </div>
                       <div className="space-y-1.5">
-                        {suggestion.recordIdCandidates.map((candidate, idx) => (
-                          <Badge
-                            key={candidate}
-                            variant={candidate === suggestion.selectedRecordId ? "default" : "outline"}
-                            className={`text-xs ${candidate === suggestion.selectedRecordId ? 'bg-primary' : 'bg-primary/10'}`}
-                          >
-                            {idx === 0 && candidate === suggestion.selectedRecordId && '✓ '}
-                            {candidate}
+                        {level.recordId ? (
+                          <Badge variant="default" className="text-xs bg-primary">
+                            {level.recordId}
                           </Badge>
-                        ))}
+                        ) : (
+                          <Badge variant="destructive" className="text-xs">
+                            ⚠️ No Record ID found
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     
-                    {/* Record Name */}
+                    {/* Record Name - Show actual property name */}
                     <div>
                       <div className="flex items-center gap-2 mb-2">
                         <FileText className="w-4 h-4 text-accent" />
                         <span className="text-sm font-semibold">Record Name</span>
                       </div>
                       <div className="space-y-1.5">
-                        {suggestion.recordNameCandidates.length > 0 ? (
-                          suggestion.recordNameCandidates.map((candidate, idx) => (
-                            <Badge
-                              key={candidate}
-                              variant={candidate === suggestion.selectedRecordName ? "default" : "outline"}
-                              className={`text-xs ${candidate === suggestion.selectedRecordName ? 'bg-accent' : 'bg-accent/10'}`}
-                            >
-                              {idx === 0 && candidate === suggestion.selectedRecordName && '✓ '}
-                              {candidate}
-                            </Badge>
-                          ))
+                        {level.recordName ? (
+                          <Badge variant="default" className="text-xs bg-accent">
+                            {level.recordName}
+                          </Badge>
                         ) : (
-                          <p className="text-xs text-muted-foreground">No name field detected</p>
+                          <Badge variant="destructive" className="text-xs">
+                            ⚠️ No Record Name found
+                          </Badge>
                         )}
                       </div>
                     </div>
@@ -205,7 +194,14 @@ export const PropertyRecommendations = ({
               Data Type Analysis
             </h3>
             <div className="space-y-3">
-              {propertyRecommendations.map((rec, index) => (
+              {propertyRecommendations.map((rec, index) => {
+                // Check if this property is a Record ID or Record Name in any level
+                const recordIdLevel = hierarchy.find(level => level.recordId === rec.header);
+                const recordNameLevel = hierarchy.find(level => level.recordName === rec.header);
+                const isRecordId = !!recordIdLevel;
+                const isRecordName = !!recordNameLevel;
+                
+                return (
                 <motion.div
                   key={rec.header}
                   initial={{ opacity: 0, x: -20 }}
@@ -218,14 +214,21 @@ export const PropertyRecommendations = ({
                       <div className="flex items-center gap-2 mb-2">
                         {getDataTypeIcon(rec.dataType)}
                         <h4 className="font-medium">{rec.header}</h4>
+                        {isRecordId && (
+                          <Badge variant="default" className="bg-primary text-xs">
+                            Record ID (L{recordIdLevel?.level})
+                          </Badge>
+                        )}
+                        {isRecordName && (
+                          <Badge variant="default" className="bg-accent text-xs">
+                            Record Name (L{recordNameLevel?.level})
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary">
                           {getDataTypeLabel(rec.dataType)}
-                        </Badge>
-                        <Badge className={getConfidenceColor(rec.confidence)}>
-                          {Math.round(rec.confidence * 100)}% confidence
                         </Badge>
                       </div>
 
@@ -249,7 +252,8 @@ export const PropertyRecommendations = ({
                     </div>
                   </div>
                 </motion.div>
-              ))}
+              );
+              })}
             </div>
           </div>
 

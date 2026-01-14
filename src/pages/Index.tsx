@@ -18,7 +18,7 @@ import { generateExportReport, buildTaxonomyTree, buildCustomTaxonomyTree } from
 import { validateData } from '@/utils/dataValidation';
 import { generatePDFReport } from '@/utils/pdfExport';
 import { useToast } from '@/hooks/use-toast';
-import { Download, CheckCircle2, XCircle, Play, FileText } from 'lucide-react';
+import { Download, CheckCircle2, XCircle, Play, FileText, RotateCcw } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -42,6 +42,9 @@ const Index = () => {
   const [forcedSkuHeaders, setForcedSkuHeaders] = useState<string[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<any>(null);
   const [taxonomyConfig, setTaxonomyConfig] = useState<TaxonomyConfig | null>(null);
+  const [presetResetKey, setPresetResetKey] = useState<number>(0); // Increment to reset SkuLevelForcing
+  const [originalPresets, setOriginalPresets] = useState<any[]>([]); // Store original presets from initial analysis
+  const [originalAnalysisResult, setOriginalAnalysisResult] = useState<AnalysisResult | null>(null); // Store original analysis for reset
   const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
@@ -144,6 +147,23 @@ const Index = () => {
     // Pass forced headers to maintain user selections across threshold changes
     const result = analyzeProductData(headersToAnalyze, dataToAnalyze, customThresholds, forcedHeaders);
     setAnalysisResult(result);
+    
+    // CRITICAL: Store original analysis result for reset functionality
+    // Only store on FIRST analysis (when originalAnalysisResult is null)
+    if (!originalAnalysisResult) {
+      const clonedResult = JSON.parse(JSON.stringify(result));
+      setOriginalAnalysisResult(clonedResult);
+      console.log('📦 Stored original analysis result for reset');
+    }
+    
+    // CRITICAL: Store original presets from initial analysis
+    // These should NOT be affected by subsequent forcing operations
+    if (result.hierarchyPresets && result.hierarchyPresets.length > 0) {
+      // Deep clone to prevent mutations
+      const clonedPresets = JSON.parse(JSON.stringify(result.hierarchyPresets));
+      setOriginalPresets(clonedPresets);
+      console.log('📦 Stored original presets:', clonedPresets.length);
+    }
 
     // Build taxonomy tree - use custom config if available, otherwise automatic
     const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
@@ -221,6 +241,64 @@ const Index = () => {
       
       if (removedProps.length > 0) {
         console.log(`🔄 Level ${i + 1}: Moved ${removedProps.length} properties to SKU:`, removedProps);
+      }
+      
+      // ========================================================================
+      // BUG FIX: Re-select Record ID if current one was forced to SKU
+      // ========================================================================
+      if (level.recordId && forcedSet.has(level.recordId)) {
+        console.log(`🔄 Level ${i + 1}: Record ID "${level.recordId}" was forced to SKU. Re-selecting...`);
+        
+        // Add old Record ID to SKU level
+        if (!skuLevel.headers.includes(level.recordId)) {
+          skuLevel.headers.push(level.recordId);
+        }
+        
+        // Find new Record ID from remaining headers
+        const idKeywords = ['id', 'code', 'key', 'number', 'sku', 'ean', 'gtin'];
+        const newRecordId = level.headers.find((h: string) => {
+          const lower = h.toLowerCase();
+          return idKeywords.some(kw => lower.includes(kw));
+        }) || level.headers[0]; // Fallback to first header
+        
+        if (newRecordId) {
+          level.recordId = newRecordId;
+          // Remove new Record ID from headers list
+          level.headers = level.headers.filter((h: string) => h !== newRecordId);
+          console.log(`✅ Level ${i + 1}: New Record ID selected: "${newRecordId}"`);
+        } else {
+          level.recordId = undefined;
+          console.log(`⚠️ Level ${i + 1}: No suitable Record ID found`);
+        }
+      }
+      
+      // ========================================================================
+      // BUG FIX: Re-select Record Name if current one was forced to SKU
+      // ========================================================================
+      if (level.recordName && forcedSet.has(level.recordName)) {
+        console.log(`🔄 Level ${i + 1}: Record Name "${level.recordName}" was forced to SKU. Re-selecting...`);
+        
+        // Add old Record Name to SKU level
+        if (!skuLevel.headers.includes(level.recordName)) {
+          skuLevel.headers.push(level.recordName);
+        }
+        
+        // Find new Record Name from remaining headers
+        const nameKeywords = ['name', 'description', 'title', 'label'];
+        const newRecordName = level.headers.find((h: string) => {
+          const lower = h.toLowerCase();
+          return nameKeywords.some(kw => lower.includes(kw));
+        });
+        
+        if (newRecordName) {
+          level.recordName = newRecordName;
+          // Remove new Record Name from headers list
+          level.headers = level.headers.filter((h: string) => h !== newRecordName);
+          console.log(`✅ Level ${i + 1}: New Record Name selected: "${newRecordName}"`);
+        } else {
+          level.recordName = undefined;
+          console.log(`⚠️ Level ${i + 1}: No suitable Record Name found`);
+        }
       }
     }
     
@@ -398,6 +476,18 @@ const Index = () => {
     console.log('🔵 Preset name:', preset.name);
     console.log('🔵 Preset hierarchy levels:', preset.hierarchy.length);
     
+    // ========================================================================
+    // BUG FIX: Reset forced SKU headers when changing preset
+    // This ensures the preset starts fresh without previous forcing
+    // ========================================================================
+    if (forcedSkuHeaders.length > 0) {
+      console.log('🔵 Resetting forced SKU headers:', forcedSkuHeaders.length);
+      setForcedSkuHeaders([]);
+    }
+    
+    // Increment resetKey to trigger SkuLevelForcing component to clear its internal state
+    setPresetResetKey(prev => prev + 1);
+    
     setSelectedPreset(preset);
     
     if (!analysisResult) return;
@@ -469,6 +559,45 @@ const Index = () => {
     });
   };
 
+  // Reset to original analysis - restore initial state
+  const handleResetToOriginal = () => {
+    if (!originalAnalysisResult) {
+      toast({
+        title: 'No Original Analysis',
+        description: 'No original analysis to restore.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    // Deep clone to prevent mutations
+    const clonedResult = JSON.parse(JSON.stringify(originalAnalysisResult));
+    setAnalysisResult(clonedResult);
+    
+    // Reset all modification states
+    setForcedSkuHeaders([]);
+    setSelectedPreset(null);
+    setPresetResetKey(prev => prev + 1);
+    
+    // Rebuild taxonomy tree with original hierarchy
+    const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
+      ? buildCustomTaxonomyTree(taxonomyConfig, data, headers)
+      : buildTaxonomyTree(clonedResult.hierarchy, data, headers);
+    setTaxonomyTree(tree);
+    
+    // Revalidate with original data
+    const hierarchyHeaders = clonedResult.hierarchy.flatMap((h: any) => h.headers);
+    const recordId = clonedResult.recordIdSuggestion;
+    const recordName = clonedResult.recordNameSuggestion;
+    const validation = validateData(headers, data, hierarchyHeaders, recordId, recordName, allHeaders);
+    setValidationResult(validation);
+    
+    toast({
+      title: 'Analysis Reset',
+      description: 'Restored to original analysis. All manual changes have been cleared.',
+    });
+  };
+
   const handleExportPDF = () => {
     if (!analysisResult || !taxonomyTree) return;
 
@@ -504,10 +633,18 @@ const Index = () => {
               </p>
             </div>
             {analysisResult && (
-              <Button className="gap-2" onClick={handleExportPDF}>
-                <FileText className="w-4 h-4" />
-                <span className="hidden sm:inline">Export PDF Report</span>
-              </Button>
+              <div className="flex items-center gap-2">
+                {originalAnalysisResult && (
+                  <Button variant="outline" className="gap-2" onClick={handleResetToOriginal}>
+                    <RotateCcw className="w-4 h-4" />
+                    <span className="hidden sm:inline">Reset</span>
+                  </Button>
+                )}
+                <Button className="gap-2" onClick={handleExportPDF}>
+                  <FileText className="w-4 h-4" />
+                  <span className="hidden sm:inline">Export PDF Report</span>
+                </Button>
+              </div>
             )}
           </div>
         </div>
@@ -533,9 +670,10 @@ const Index = () => {
               {analysisResult && (
                 <>
                   {/* NEW: Preset Selector - Choose structure type */}
-                  {analysisResult.hierarchyPresets && analysisResult.hierarchyPresets.length > 0 && (
+                  {/* CRITICAL: Use originalPresets to ensure presets are not affected by forcing operations */}
+                  {originalPresets.length > 0 && (
                     <PresetSelector
-                      presets={analysisResult.hierarchyPresets}
+                      presets={originalPresets}
                       onSelectPreset={handlePresetSelection}
                       selectedPreset={selectedPreset}
                     />
@@ -546,6 +684,7 @@ const Index = () => {
                     headers={headers}
                     currentHierarchy={analysisResult.hierarchy}
                     onApply={handleSkuLevelForcing}
+                    resetKey={presetResetKey}
                   />
                   
                   {/* Data Pattern Analysis - CORE for hierarchy decisions */}
@@ -559,6 +698,41 @@ const Index = () => {
                     hierarchy={analysisResult.hierarchy}
                     properties={analysisResult.properties}
                     propertiesWithoutValues={analysisResult.propertiesWithoutValues}
+                    onHierarchyChange={(newHierarchy) => {
+                      // Recalculate propertiesWithoutValues based on new hierarchy
+                      const hasValues = (header: string): boolean => {
+                        const headerIndex = headers.indexOf(header);
+                        if (headerIndex === -1) return false;
+                        return data.some(row => {
+                          const val = row[headerIndex];
+                          return val !== null && val !== undefined && String(val).trim() !== '';
+                        });
+                      };
+                      
+                      const newPropertiesWithoutValues: string[] = [];
+                      newHierarchy.forEach(level => {
+                        level.headers.forEach((header: string) => {
+                          if (!hasValues(header)) {
+                            newPropertiesWithoutValues.push(header);
+                          }
+                        });
+                      });
+                      
+                      // Update analysis result with new hierarchy
+                      setAnalysisResult({
+                        ...analysisResult,
+                        hierarchy: newHierarchy,
+                        propertiesWithoutValues: newPropertiesWithoutValues,
+                        // Update recordIdSuggestion and recordNameSuggestion based on last level
+                        recordIdSuggestion: newHierarchy[newHierarchy.length - 1]?.recordId || null,
+                        recordNameSuggestion: newHierarchy[newHierarchy.length - 1]?.recordName || null,
+                      });
+                      
+                      toast({
+                        title: 'Hierarchy Updated',
+                        description: 'Record ID/Name assignment has been changed.',
+                      });
+                    }}
                   />
                   
                   {/* Taxonomy Configuration - Allow custom taxonomy setup */}

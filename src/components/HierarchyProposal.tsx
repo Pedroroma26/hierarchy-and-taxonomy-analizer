@@ -2,17 +2,150 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronRight, ChevronDown, Database, Layers, Tag } from 'lucide-react';
+import { ChevronRight, ChevronDown, Database, Layers, Tag, Pencil, Check, X } from 'lucide-react';
 import { HierarchyLevel } from '@/types';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface HierarchyProposalProps {
   hierarchy: HierarchyLevel[];
   properties: string[];
   propertiesWithoutValues?: string[];
+  onHierarchyChange?: (newHierarchy: HierarchyLevel[]) => void;
 }
 
-export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValues = [] }: HierarchyProposalProps) => {
+export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValues = [], onHierarchyChange }: HierarchyProposalProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [editingLevel, setEditingLevel] = useState<number | null>(null);
+  const [editingField, setEditingField] = useState<'recordId' | 'recordName' | null>(null);
+
+  // Get all properties from all levels (headers + recordId + recordName)
+  const getAllProperties = () => {
+    const allProps: { property: string; level: number; levelName: string }[] = [];
+    
+    hierarchy.forEach(level => {
+      // Add headers
+      level.headers.forEach(header => {
+        allProps.push({ property: header, level: level.level, levelName: level.name });
+      });
+      // Add recordId if exists and not already in headers
+      if (level.recordId && !level.headers.includes(level.recordId)) {
+        allProps.push({ property: level.recordId, level: level.level, levelName: level.name });
+      }
+      // Add recordName if exists and not already in headers
+      if (level.recordName && !level.headers.includes(level.recordName) && level.recordName !== level.recordId) {
+        allProps.push({ property: level.recordName, level: level.level, levelName: level.name });
+      }
+    });
+    
+    return allProps;
+  };
+
+  // Handle property selection for Record ID or Record Name
+  const handlePropertySelect = (levelIndex: number, field: 'recordId' | 'recordName', newProperty: string) => {
+    if (!onHierarchyChange) return;
+    
+    const newHierarchy = JSON.parse(JSON.stringify(hierarchy)) as HierarchyLevel[];
+    const targetLevel = newHierarchy[levelIndex];
+    const oldProperty = field === 'recordId' ? targetLevel.recordId : targetLevel.recordName;
+    
+    // Find which level the new property comes from
+    let sourceLevel: HierarchyLevel | null = null;
+    let sourceLevelIndex = -1;
+    
+    for (let i = 0; i < newHierarchy.length; i++) {
+      const level = newHierarchy[i];
+      if (level.headers.includes(newProperty)) {
+        sourceLevel = level;
+        sourceLevelIndex = i;
+        break;
+      }
+      if (level.recordId === newProperty || level.recordName === newProperty) {
+        sourceLevel = level;
+        sourceLevelIndex = i;
+        break;
+      }
+    }
+    
+    // Remove new property from its source location
+    if (sourceLevel) {
+      // Remove from headers
+      sourceLevel.headers = sourceLevel.headers.filter(h => h !== newProperty);
+      
+      // If it was a recordId in source, auto-select a new one from remaining headers
+      if (sourceLevel.recordId === newProperty) {
+        // Find a new Record ID from remaining headers
+        const idKeywords = ['id', 'code', 'key', 'number', 'sku', 'ean', 'gtin'];
+        const newRecordId = sourceLevel.headers.find((h: string) => {
+          const lower = h.toLowerCase();
+          return idKeywords.some(kw => lower.includes(kw));
+        }) || sourceLevel.headers[0]; // Fallback to first header
+        
+        if (newRecordId) {
+          sourceLevel.recordId = newRecordId;
+          sourceLevel.headers = sourceLevel.headers.filter(h => h !== newRecordId);
+        } else {
+          sourceLevel.recordId = undefined;
+        }
+      }
+      
+      // If it was a recordName in source, auto-select a new one from remaining headers
+      if (sourceLevel.recordName === newProperty) {
+        // Find a new Record Name from remaining headers
+        const nameKeywords = ['name', 'description', 'title', 'label'];
+        const newRecordName = sourceLevel.headers.find((h: string) => {
+          const lower = h.toLowerCase();
+          return nameKeywords.some(kw => lower.includes(kw));
+        });
+        
+        if (newRecordName) {
+          sourceLevel.recordName = newRecordName;
+          sourceLevel.headers = sourceLevel.headers.filter(h => h !== newRecordName);
+        } else {
+          sourceLevel.recordName = undefined;
+        }
+      }
+    }
+    
+    // Add old property back to target level's headers (if it exists)
+    if (oldProperty && !targetLevel.headers.includes(oldProperty)) {
+      targetLevel.headers.push(oldProperty);
+    }
+    
+    // Set new property as recordId or recordName
+    if (field === 'recordId') {
+      targetLevel.recordId = newProperty;
+    } else {
+      targetLevel.recordName = newProperty;
+    }
+    
+    // Remove new property from target level's headers (since it's now recordId/recordName)
+    targetLevel.headers = targetLevel.headers.filter(h => h !== newProperty);
+    
+    // Close editing mode
+    setEditingLevel(null);
+    setEditingField(null);
+    
+    // Notify parent
+    onHierarchyChange(newHierarchy);
+  };
+
+  const startEditing = (levelIndex: number, field: 'recordId' | 'recordName') => {
+    setEditingLevel(levelIndex);
+    setEditingField(field);
+  };
+
+  const cancelEditing = () => {
+    setEditingLevel(null);
+    setEditingField(null);
+  };
 
   const getLevelIcon = (level: number) => {
     switch (level) {
@@ -107,20 +240,139 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
                       </h3>
                     </div>
                     
-                    {/* Record ID and Name - MANDATORY for all levels */}
+                    {/* Record ID and Name - MANDATORY for all levels - EDITABLE */}
                     <div className="mb-3 p-3 bg-background/30 rounded-md border border-background/40">
                       <div className="text-xs font-medium text-muted-foreground mb-2">Required for this level:</div>
-                      <div className="flex gap-4 text-sm">
-                        <div>
-                          <span className="font-medium">Record ID:</span>{' '}
-                          <Badge variant="secondary" className="ml-1">{level.recordId}</Badge>
+                      <div className="flex gap-4 text-sm flex-wrap">
+                        {/* Record ID */}
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">Record ID:</span>
+                          {editingLevel === index && editingField === 'recordId' ? (
+                            <div className="flex items-center gap-1">
+                              <Select
+                                value={level.recordId || ''}
+                                onValueChange={(value) => handlePropertySelect(index, 'recordId', value)}
+                              >
+                                <SelectTrigger className="h-7 w-[180px] text-xs bg-white text-gray-900 border-gray-300">
+                                  <SelectValue placeholder="Select property..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {hierarchy.map((lvl) => (
+                                    <SelectGroup key={lvl.level}>
+                                      <SelectLabel className="text-xs">Level {lvl.level}: {lvl.name}</SelectLabel>
+                                      {/* Show recordId if exists */}
+                                      {lvl.recordId && (
+                                        <SelectItem value={lvl.recordId} className="text-xs">
+                                          {lvl.recordId} {lvl.recordId === level.recordId ? '(current)' : ''}
+                                        </SelectItem>
+                                      )}
+                                      {/* Show recordName if exists and different from recordId */}
+                                      {lvl.recordName && lvl.recordName !== lvl.recordId && (
+                                        <SelectItem value={lvl.recordName} className="text-xs">
+                                          {lvl.recordName}
+                                        </SelectItem>
+                                      )}
+                                      {/* Show headers */}
+                                      {lvl.headers.map((header) => (
+                                        <SelectItem key={header} value={header} className="text-xs">
+                                          {header}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectGroup>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <button
+                                onClick={cancelEditing}
+                                className="p-1 hover:bg-background/50 rounded"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              {level.recordId ? (
+                                <Badge variant="secondary" className="ml-1">{level.recordId}</Badge>
+                              ) : (
+                                <Badge variant="destructive" className="ml-1">⚠️ Not set</Badge>
+                              )}
+                              {onHierarchyChange && (
+                                <button
+                                  onClick={() => startEditing(index, 'recordId')}
+                                  className="p-1 hover:bg-background/50 rounded ml-1"
+                                  title="Edit Record ID"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        {level.recordName && (
-                          <div>
-                            <span className="font-medium">Record Name:</span>{' '}
-                            <Badge variant="secondary" className="ml-1">{level.recordName}</Badge>
-                          </div>
-                        )}
+                        
+                        {/* Record Name */}
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">Record Name:</span>
+                          {editingLevel === index && editingField === 'recordName' ? (
+                            <div className="flex items-center gap-1">
+                              <Select
+                                value={level.recordName || ''}
+                                onValueChange={(value) => handlePropertySelect(index, 'recordName', value)}
+                              >
+                                <SelectTrigger className="h-7 w-[180px] text-xs bg-white text-gray-900 border-gray-300">
+                                  <SelectValue placeholder="Select property..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {hierarchy.map((lvl) => (
+                                    <SelectGroup key={lvl.level}>
+                                      <SelectLabel className="text-xs">Level {lvl.level}: {lvl.name}</SelectLabel>
+                                      {/* Show recordId if exists */}
+                                      {lvl.recordId && (
+                                        <SelectItem value={lvl.recordId} className="text-xs">
+                                          {lvl.recordId}
+                                        </SelectItem>
+                                      )}
+                                      {/* Show recordName if exists and different from recordId */}
+                                      {lvl.recordName && lvl.recordName !== lvl.recordId && (
+                                        <SelectItem value={lvl.recordName} className="text-xs">
+                                          {lvl.recordName} {lvl.recordName === level.recordName ? '(current)' : ''}
+                                        </SelectItem>
+                                      )}
+                                      {/* Show headers */}
+                                      {lvl.headers.map((header) => (
+                                        <SelectItem key={header} value={header} className="text-xs">
+                                          {header}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectGroup>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <button
+                                onClick={cancelEditing}
+                                className="p-1 hover:bg-background/50 rounded"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              {level.recordName ? (
+                                <Badge variant="secondary" className="ml-1">{level.recordName}</Badge>
+                              ) : (
+                                <Badge variant="destructive" className="ml-1">⚠️ Not set</Badge>
+                              )}
+                              {onHierarchyChange && (
+                                <button
+                                  onClick={() => startEditing(index, 'recordName')}
+                                  className="p-1 hover:bg-background/50 rounded ml-1"
+                                  title="Edit Record Name"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                     

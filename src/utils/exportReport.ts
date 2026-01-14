@@ -355,12 +355,10 @@ export const generateExportReport = (
       generated_at: new Date().toISOString(),
       total_products: data.length,
       total_attributes_analyzed: headers.length,
-      analysis_confidence: (analysisResult.hierarchyConfidence * 100).toFixed(1) + '%',
     },
 
     product_domain: {
       detected_type: analysisResult.productDomain.type,
-      confidence: (analysisResult.productDomain.confidence * 100).toFixed(1) + '%',
       indicators: analysisResult.productDomain.indicators,
     },
 
@@ -409,7 +407,6 @@ export const generateExportReport = (
     alternative_hierarchies: analysisResult.alternativeHierarchies.map(alt => ({
       name: alt.name,
       model_type: alt.modelType,
-      confidence: (alt.confidence * 100).toFixed(1) + '%',
       reasoning: alt.reasoning,
       levels: alt.hierarchy.length,
       hierarchy_structure: alt.hierarchy.map(h => ({

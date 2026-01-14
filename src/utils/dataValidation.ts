@@ -185,11 +185,11 @@ const validateRecordId = (
     warnings.push({
       type: 'salsify_compliance',
       severity: 'high',
-      title: `Empty Record ID Values`,
-      message: `${emptyRows.length} products have no Record ID. Cannot import to Salsify.`,
+      title: `Empty "${recordIdField}" Values (Record ID)`,
+      message: `${emptyRows.length} products have no value in "${recordIdField}". Cannot import to Salsify.`,
       affectedRows: emptyRows,
       affectedCount: emptyRows.length,
-      suggestion: `Every product must have a unique Record ID. Add values to these rows before import.`,
+      suggestion: `Every product must have a unique Record ID in "${recordIdField}". Add values to these rows before import.`,
       salsifyRule: 'Record ID is required for all products',
     });
   }
@@ -199,11 +199,11 @@ const validateRecordId = (
     warnings.push({
       type: 'salsify_compliance',
       severity: 'high',
-      title: `Record ID Starts with Underscore`,
-      message: `${underscoreRows.length} Record IDs start with "_". Salsify rejects these.`,
+      title: `"${recordIdField}" Starts with Underscore`,
+      message: `${underscoreRows.length} values in "${recordIdField}" start with "_". Salsify rejects these.`,
       affectedRows: underscoreRows,
       affectedCount: underscoreRows.length,
-      suggestion: `Remove leading underscore from Record IDs. Example: "_SKU123" → "SKU123"`,
+      suggestion: `Remove leading underscore from "${recordIdField}". Example: "_SKU123" → "SKU123"`,
       examples: underscoreExamples,
       salsifyRule: 'Record ID cannot start with underscore (_)',
     });
@@ -214,11 +214,11 @@ const validateRecordId = (
     warnings.push({
       type: 'salsify_compliance',
       severity: 'medium',
-      title: `Record ID Contains Special Characters`,
-      message: `${specialCharRows.length} Record IDs have special characters. May cause issues.`,
+      title: `"${recordIdField}" Contains Special Characters`,
+      message: `${specialCharRows.length} values in "${recordIdField}" have special characters. May cause issues.`,
       affectedRows: specialCharRows,
       affectedCount: specialCharRows.length,
-      suggestion: `Use only letters, numbers, dashes and underscores in Record IDs.`,
+      suggestion: `Use only letters, numbers, dashes and underscores in "${recordIdField}".`,
       examples: specialCharExamples,
       salsifyRule: 'Avoid special characters in Record ID',
     });
@@ -262,11 +262,11 @@ const validateRecordName = (
     warnings.push({
       type: 'salsify_compliance',
       severity: 'medium',
-      title: `Empty Record Name Values`,
-      message: `${emptyRows.length} products (${percentage}%) have no Record Name.`,
+      title: `Empty "${recordNameField}" Values (Record Name)`,
+      message: `${emptyRows.length} products (${percentage}%) have no value in "${recordNameField}".`,
       affectedRows: emptyRows,
       affectedCount: emptyRows.length,
-      suggestion: `Add descriptive names for better product identification in Salsify.`,
+      suggestion: `Add descriptive names in "${recordNameField}" for better product identification in Salsify.`,
       salsifyRule: 'Record Name recommended for all products',
     });
   }

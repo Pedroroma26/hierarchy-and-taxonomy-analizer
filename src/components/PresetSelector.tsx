@@ -99,9 +99,6 @@ export const PresetSelector = ({ presets, onSelectPreset, selectedPreset }: Pres
                     <Badge variant="outline" className="text-xs">
                       {preset.hierarchy.length} {preset.hierarchy.length === 1 ? 'Level' : 'Levels'}
                     </Badge>
-                    <Badge variant="secondary" className="text-xs">
-                      {Math.round(preset.confidence * 100)}% confidence
-                    </Badge>
                   </div>
 
                   {/* Level Names */}

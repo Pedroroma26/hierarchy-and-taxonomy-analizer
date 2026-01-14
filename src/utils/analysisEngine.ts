@@ -80,11 +80,13 @@ export interface AnalysisResult {
   };
 }
 
-// Thresholds for 4-level cardinality classification
-export let PARENT_THRESHOLD = 0.02; // ≤2% unique = Parent (Level 1)
-export let CHILDREN_THRESHOLD_MIN = 0.50; // 50% unique = Children start (Level 2)
-export let CHILDREN_THRESHOLD_MAX = 0.75; // 75% unique = Children end (Level 3)
-export let SKU_THRESHOLD = 0.98; // ≥98% unique = SKU/Attribute (Level 4)
+// Thresholds for cardinality classification - FLEXIBLE for initial analysis
+// Based on real data analysis: avg hierarchy cardinality 19%, max 28%
+// Presets will enforce stricter criteria when selected
+export let PARENT_THRESHOLD = 0.15; // ≤15% unique = Parent (Level 1) - was 2%, now more flexible
+export let CHILDREN_THRESHOLD_MIN = 0.30; // 30% unique = Children start (Level 2) - was 50%
+export let CHILDREN_THRESHOLD_MAX = 0.60; // 60% unique = Children end (Level 3) - was 75%
+export let SKU_THRESHOLD = 0.80; // ≥80% unique = SKU/Attribute (Level 4) - was 98%
 
 export const updateThresholds = (parent: number, childrenMin: number, childrenMax: number, sku: number) => {
   PARENT_THRESHOLD = parent;
@@ -93,41 +95,50 @@ export const updateThresholds = (parent: number, childrenMin: number, childrenMa
   SKU_THRESHOLD = sku;
 };
 
-// Centralized keyword lists for filtering and validation
+// ============================================================================
+// UNIVERSAL EXCLUSION KEYWORDS - Based on real data analysis
+// These fields should NEVER be proposed for hierarchy, Record ID, or Record Name
+// ============================================================================
 const EXCLUDE_KEYWORDS = {
-  // IDs and codes - should not be Record Names
+  // IDs and codes - should not be Record Names (but CAN be Record IDs)
   IDS_AND_CODES: [
-    'id', 'code', 'number', 'num', 'sku', 'ean', 'gtin', 'upc',
-    'zun', 'zuc', 'barcode', 'plu', 'gln', 'asin', 'model number', 'item model'
+    'ean', 'gtin', 'upc', 'barcode', 'plu', 'gln', 'asin',
+    'zun', 'zuc', 'model number', 'item model'
   ],
   
-  // Logistics - should not be Record IDs or Record Names
+  // Logistics - should NEVER be Record IDs, Record Names, or Hierarchy
   LOGISTICS: [
     'pack type', 'packing type', 'packaging type', 'pack size',
-    'pallet', 'pal', 'car', 'lay', 'cs', 'cv', 'truck',
-    'shipping', 'package', 'dimension'
+    'pallet', 'pal', 'carton', 'car', 'lay', 'cs', 'cv', 'truck',
+    'shipping', 'package', 'dimension', 'layer', 'stackability'
   ],
   
-  // Units of Measure - should not be Record IDs or Record Names
+  // Units of Measure - should NEVER be Record IDs, Record Names, or Hierarchy
   UOM: [
     'unit', 'uom', 'measure', 'weight', 'volume', 'liter', 'litre',
-    'height', 'width', 'depth', 'length', 'size'
+    'height', 'width', 'depth', 'length', 'numerator', 'denominator',
+    'gross weight', 'net weight'
   ],
   
-  // Inventory/Quantity - should not be Record Names
+  // Inventory/Quantity/Pricing - should NEVER be Record IDs, Record Names, or Hierarchy
   INVENTORY: [
-    'qty', 'quantity', 'stock', 'case', 'layer', 'price'
+    'qty', 'quantity', 'stock', 'case', 'price', 'cost'
   ],
   
-  // Technical/Dates - should not be Record Names
+  // Dates/Time - should NEVER be Record IDs, Record Names, or Hierarchy
+  DATES: [
+    'date', 'time', 'created', 'modified', 'updated', 'valid',
+    'listed', 'first', 'dispatch', 'availab', 'starting'
+  ],
+  
+  // URLs/Media - should NEVER be Record IDs, Record Names, or Hierarchy
+  MEDIA: [
+    'url', 'link', 'href', 'image', 'photo', 'asset', 'picture'
+  ],
+  
+  // Technical fields - should not be hierarchy or Record Names
   TECHNICAL: [
-    'supervisor', 'family', 'hierarchy', 'date', 'time', 'created', 'valid',
-    'listed', 'first', 'url', 'link', 'href'
-  ],
-  
-  // Attributes/Variants - should not be Record Names (prefer descriptive names)
-  ATTRIBUTES: [
-    'color', 'colour', 'size'
+    'supervisor', 'hierarchy', 'info', 'comment', 'internal'
   ]
 };
 
@@ -137,18 +148,34 @@ const ALL_EXCLUDE_KEYWORDS = [
   ...EXCLUDE_KEYWORDS.LOGISTICS,
   ...EXCLUDE_KEYWORDS.UOM,
   ...EXCLUDE_KEYWORDS.INVENTORY,
-  ...EXCLUDE_KEYWORDS.TECHNICAL,
-  ...EXCLUDE_KEYWORDS.ATTRIBUTES
+  ...EXCLUDE_KEYWORDS.DATES,
+  ...EXCLUDE_KEYWORDS.MEDIA,
+  ...EXCLUDE_KEYWORDS.TECHNICAL
 ];
 
-// Exclude keywords for Record ID validation (UoM + Logistics only)
+// Exclude keywords for Record ID validation
+// These should NEVER be proposed as Record ID
 const EXCLUDE_KEYWORDS_RECORD_ID = [
   ...EXCLUDE_KEYWORDS.LOGISTICS,
-  ...EXCLUDE_KEYWORDS.UOM
+  ...EXCLUDE_KEYWORDS.UOM,
+  ...EXCLUDE_KEYWORDS.INVENTORY,
+  ...EXCLUDE_KEYWORDS.DATES,
+  ...EXCLUDE_KEYWORDS.MEDIA
 ];
 
-// Exclude keywords for Record Name validation (all categories)
+// Exclude keywords for Record Name validation
+// These should NEVER be proposed as Record Name
 const EXCLUDE_KEYWORDS_RECORD_NAME = ALL_EXCLUDE_KEYWORDS;
+
+// Exclude keywords for Hierarchy classification
+// These should NEVER be considered for hierarchy levels
+const EXCLUDE_KEYWORDS_HIERARCHY = [
+  ...EXCLUDE_KEYWORDS.LOGISTICS,
+  ...EXCLUDE_KEYWORDS.UOM,
+  ...EXCLUDE_KEYWORDS.INVENTORY,
+  ...EXCLUDE_KEYWORDS.DATES,
+  ...EXCLUDE_KEYWORDS.MEDIA
+];
 
 export const analyzeProductData = (
   headers: string[],
@@ -259,38 +286,60 @@ const calculateCardinalityScores = (
     const columnData = data.map((row) => row[index]);
     const allValues = columnData.length;
     const nonEmptyValues = columnData.filter((val) => val !== null && val !== undefined && val !== '');
+    const stringValues = nonEmptyValues.map(v => String(v));
     const uniqueValues = new Set(nonEmptyValues);
     const uniqueCount = uniqueValues.size;
     const totalCount = nonEmptyValues.length;
     const cardinality = totalCount > 0 ? uniqueCount / totalCount : 0;
     
-    // NEW: Calculate completeness (data density)
+    // Calculate completeness (data density)
     const completeness = allValues > 0 ? totalCount / allValues : 0;
     
-    // NEW: Calculate hierarchy score (multi-factor)
-    // Formula: Completeness weight * Cardinality weight
-    // High completeness + Low cardinality = Top hierarchy level
-    // High completeness + High cardinality = SKU/Attribute level
-    // Low completeness = Variant/Attribute (regardless of cardinality)
+    // Detect pipe taxonomy (values with | separator)
+    const hasPipes = stringValues.some(v => v.includes('|'));
+    const pipeRatio = stringValues.filter(v => v.includes('|')).length / Math.max(stringValues.length, 1);
+    
+    // Check header for exclusion keywords (logistics, UoM, dates, URLs)
+    const headerLower = header.toLowerCase().trim();
+    const isExcluded = EXCLUDE_KEYWORDS_HIERARCHY.some(ex => headerLower.includes(ex));
+    
+    // Calculate hierarchy score - PURE METRICS APPROACH
+    // Based on real data analysis: avg hierarchy cardinality 19%, avg completeness 57%
+    // Formula: Higher score = better hierarchy candidate
     let hierarchyScore = 0;
     
-    if (completeness >= 0.8) {
-      // High completeness (≥80% filled)
+    // If excluded field (logistics, UoM, dates, URLs) - very low score
+    if (isExcluded) {
+      hierarchyScore = 5; // Almost never hierarchy
+    } else if (completeness >= 0.40) {
+      // Good completeness (≥40% filled)
       if (cardinality <= 0.05) {
-        hierarchyScore = 100; // Top level (Brand, Category)
+        hierarchyScore = 100; // Top level - very few unique values
+      } else if (cardinality <= 0.15) {
+        hierarchyScore = 85;  // High hierarchy potential
       } else if (cardinality <= 0.30) {
-        hierarchyScore = 75;  // Mid level (Subcategory, Material)
-      } else if (cardinality <= 0.70) {
-        hierarchyScore = 50;  // Variant level (Color, Size)
+        hierarchyScore = 70;  // Mid level hierarchy
+      } else if (cardinality <= 0.50) {
+        hierarchyScore = 50;  // Lower hierarchy potential
+      } else if (cardinality <= 0.80) {
+        hierarchyScore = 30;  // Likely attribute
       } else {
-        hierarchyScore = 25;  // SKU/Attribute level (EAN, SKU)
+        hierarchyScore = 15;  // SKU/Unique identifier level
       }
-    } else if (completeness >= 0.50) {
-      // Medium completeness (50-80% filled)
-      hierarchyScore = 40; // Likely variant/attribute
+    } else if (completeness >= 0.20) {
+      // Low-medium completeness (20-40% filled)
+      hierarchyScore = 25; // Likely attribute/variant
+    } else if (completeness >= 0.05) {
+      // Low completeness (5-20% filled)
+      hierarchyScore = 10; // Sparse attribute
     } else {
-      // Low completeness (<50% filled)
-      hierarchyScore = 10; // Sparse attribute (never top-level)
+      // Very low completeness (<5% filled) - ignore
+      hierarchyScore = 0; // Too sparse to consider
+    }
+    
+    // Bonus for pipe taxonomy (multi-level indicator)
+    if (pipeRatio > 0.3) {
+      hierarchyScore = Math.min(100, hierarchyScore + 15);
     }
 
     // CRITICAL: 3-level classification (max 3 levels per user requirement)
@@ -690,34 +739,38 @@ const determineHierarchy = (
   // 10  = Sparse attribute - Low completeness (NEVER top-level)
   
   // ============================================================================
-  // FLEXIBLE HIERARCHY: More tolerant initial analysis
+  // IMPROVED FLEXIBLE HIERARCHY: Based on real data analysis
+  // Thresholds: Cardinalidade ≤28%, Completude ≥40% for hierarchies
   // Presets will still enforce stricter criteria when selected
   // ============================================================================
   
-  // Level 1: TOLERANT criteria - Accept lower completeness (≥60%) and hierarchyScore (≥50)
-  // This allows more data patterns to be detected as hierarchical
+  // Level 1: TOP HIERARCHY - High score, good completeness, low cardinality
+  // Based on analysis: avg cardinality 19%, avg completeness 57%
   const level1Headers = sortedScores
-    .filter((score) => score.hierarchyScore >= 50 && score.completeness >= 0.60 && score.cardinality <= 0.30)
-    .map((score) => score.header);
-
-  // Level 2: TOLERANT - Accept mid-level properties with moderate completeness
-  // Lower thresholds to capture more potential hierarchy structures
-  const level2Headers = sortedScores
     .filter((score) => 
-      score.hierarchyScore >= 25 && 
-      score.hierarchyScore < 50 && 
-      score.completeness >= 0.50 &&
-      score.cardinality < 0.70  // More tolerant cardinality threshold
+      score.hierarchyScore >= 60 && 
+      score.completeness >= 0.40 && 
+      score.cardinality <= 0.28  // Based on analysis: max 28%
     )
     .map((score) => score.header);
 
-  // SKU Level: Everything else - very low hierarchy score OR very high uniqueness OR sparse data
-  // Includes: logistics, dates, technical specs, item-level attributes
+  // Level 2: MID HIERARCHY - Medium score, acceptable completeness
+  const level2Headers = sortedScores
+    .filter((score) => 
+      score.hierarchyScore >= 35 && 
+      score.hierarchyScore < 60 && 
+      score.completeness >= 0.30 &&
+      score.cardinality < 0.50
+    )
+    .map((score) => score.header);
+
+  // SKU Level: Everything else - low hierarchy score OR high uniqueness OR sparse data
+  // Also includes: completeness < 5% (ignore very sparse columns)
   const skuHeaders = sortedScores
     .filter((score) => 
-      score.hierarchyScore < 25 ||  // Very low hierarchy score
-      score.cardinality >= 0.70 ||   // High uniqueness
-      score.completeness < 0.50     // Sparse data
+      score.hierarchyScore < 35 ||  // Low hierarchy score
+      score.cardinality >= 0.50 ||   // High uniqueness
+      score.completeness < 0.20     // Sparse data
     )
     .map((score) => score.header);
 
