@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
@@ -24,7 +24,7 @@ interface TaxonomyBuilderProps {
   initialConfig?: TaxonomyConfig;
 }
 
-export const TaxonomyBuilder = ({ 
+export const TaxonomyBuilder = memo(({ 
   availableProperties, 
   onConfigChange,
   initialConfig 
@@ -70,9 +70,11 @@ export const TaxonomyBuilder = ({
     }
   };
 
-  const usedProperties = levels.map(l => l.property);
-  const availableForSelection = availableProperties.filter(
-    p => !usedProperties.includes(p) || p === ''
+  // Memoize expensive calculations
+  const usedProperties = useMemo(() => levels.map(l => l.property), [levels]);
+  const availableForSelection = useMemo(() => 
+    availableProperties.filter(p => !usedProperties.includes(p) || p === ''),
+    [availableProperties, usedProperties]
   );
 
   return (
@@ -219,4 +221,4 @@ export const TaxonomyBuilder = ({
       </Card>
     </motion.div>
   );
-};
+});

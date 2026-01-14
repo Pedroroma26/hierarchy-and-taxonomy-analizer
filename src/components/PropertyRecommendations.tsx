@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,7 +27,7 @@ interface PropertyRecommendationsProps {
   hierarchy: HierarchyLevel[];
 }
 
-export const PropertyRecommendations = ({
+export const PropertyRecommendations = memo(({
   recordIdSuggestion,
   recordNameSuggestion,
   recordIdNameSuggestions,
@@ -316,4 +316,4 @@ export const PropertyRecommendations = ({
       </Card>
     </motion.div>
   );
-};
+});

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -25,7 +25,7 @@ interface CardinalityAnalysisProps {
   };
 }
 
-export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisProps) => {
+export const CardinalityAnalysis = memo(({ scores, thresholds }: CardinalityAnalysisProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   
   const getClassificationColor = (classification: string) => {
@@ -124,4 +124,4 @@ export const CardinalityAnalysis = ({ scores, thresholds }: CardinalityAnalysisP
       </Card>
     </motion.div>
   );
-};
+});

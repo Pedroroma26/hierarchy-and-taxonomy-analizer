@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -152,7 +152,7 @@ const propertyGroups = {
   }
 };
 
-export const SkuLevelForcing = ({ headers, currentHierarchy, onApply, resetKey }: SkuLevelForcingProps) => {
+export const SkuLevelForcing = memo(({ headers, currentHierarchy, onApply, resetKey }: SkuLevelForcingProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [manuallySelected, setManuallySelected] = useState<Set<string>>(new Set());
@@ -482,4 +482,4 @@ export const SkuLevelForcing = ({ headers, currentHierarchy, onApply, resetKey }
       </Card>
     </motion.div>
   );
-};
+});

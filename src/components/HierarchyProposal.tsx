@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -21,14 +21,14 @@ interface HierarchyProposalProps {
   onHierarchyChange?: (newHierarchy: HierarchyLevel[]) => void;
 }
 
-export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValues = [], onHierarchyChange }: HierarchyProposalProps) => {
+export const HierarchyProposal = memo(({ hierarchy, properties, propertiesWithoutValues = [], onHierarchyChange }: HierarchyProposalProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [editingLevel, setEditingLevel] = useState<number | null>(null);
   const [editingField, setEditingField] = useState<'recordId' | 'recordName' | null>(null);
   const [movingProperty, setMovingProperty] = useState<{ property: string; fromLevel: number } | null>(null);
 
-  // Get all properties from all levels (headers + recordId + recordName)
-  const getAllProperties = () => {
+  // Get all properties from all levels (headers + recordId + recordName) - memoized for performance
+  const allProperties = useMemo(() => {
     const allProps: { property: string; level: number; levelName: string }[] = [];
     
     hierarchy.forEach(level => {
@@ -47,7 +47,7 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
     });
     
     return allProps;
-  };
+  }, [hierarchy]);
 
   // Handle property selection for Record ID or Record Name
   const handlePropertySelect = (levelIndex: number, field: 'recordId' | 'recordName', newProperty: string) => {
@@ -497,4 +497,4 @@ export const HierarchyProposal = ({ hierarchy, properties, propertiesWithoutValu
       </Card>
     </motion.div>
   );
-};
+});

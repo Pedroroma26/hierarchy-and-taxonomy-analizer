@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ interface PresetSelectorProps {
   selectedPreset?: HierarchyAlternative;
 }
 
-export const PresetSelector = ({ presets, onSelectPreset, selectedPreset }: PresetSelectorProps) => {
+export const PresetSelector = memo(({ presets, onSelectPreset, selectedPreset }: PresetSelectorProps) => {
   const [hoveredPreset, setHoveredPreset] = useState<string | null>(null);
 
   const getPresetIcon = (name: string) => {
@@ -137,4 +137,4 @@ export const PresetSelector = ({ presets, onSelectPreset, selectedPreset }: Pres
       </div>
     </Card>
   );
-};
+});

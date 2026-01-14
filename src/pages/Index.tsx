@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import * as XLSX from 'xlsx';
 import { FileUpload } from '@/components/FileUpload';
@@ -13,12 +13,13 @@ import { DataValidationWarnings } from '@/components/DataValidationWarnings';
 import { BestPracticesRecommendations } from '@/components/BestPracticesRecommendations';
 import { PresetSelector } from '@/components/PresetSelector';
 import { SkuLevelForcing } from '@/components/SkuLevelForcing';
-import { analyzeProductData, AnalysisResult } from '@/utils/analysisEngine';
+import { AnalysisResult } from '@/utils/analysisEngine';
 import { generateExportReport, buildTaxonomyTree, buildCustomTaxonomyTree } from '@/utils/exportReport';
 import { validateData } from '@/utils/dataValidation';
 import { generatePDFReport } from '@/utils/pdfExport';
 import { useToast } from '@/hooks/use-toast';
-import { Download, CheckCircle2, XCircle, Play, FileText, RotateCcw } from 'lucide-react';
+import { useAnalysisWorker } from '@/hooks/useAnalysisWorker';
+import { Download, CheckCircle2, XCircle, Play, FileText, RotateCcw, Loader2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -45,7 +46,19 @@ const Index = () => {
   const [presetResetKey, setPresetResetKey] = useState<number>(0); // Increment to reset SkuLevelForcing
   const [originalPresets, setOriginalPresets] = useState<any[]>([]); // Store original presets from initial analysis
   const [originalAnalysisResult, setOriginalAnalysisResult] = useState<AnalysisResult | null>(null); // Store original analysis for reset
+  const [isProcessing, setIsProcessing] = useState(false); // For data filtering before analysis
   const { toast } = useToast();
+  
+  // Web Worker for heavy analysis - runs in separate thread to avoid blocking UI
+  const { analyze: analyzeInWorker, isAnalyzing, progress, terminate: terminateWorker } = useAnalysisWorker();
+  
+  // Combined loading state - show spinner during processing OR analyzing
+  const showLoading = isProcessing || isAnalyzing;
+  
+  // Cleanup worker on unmount
+  useEffect(() => {
+    return () => terminateWorker();
+  }, [terminateWorker]);
 
   const handleFileUpload = async (file: File) => {
     try {
@@ -119,75 +132,95 @@ const Index = () => {
     }
   };
 
-  const handleHeaderSelection = (selected: string[]) => {
-    setSelectedHeaders(selected);
-    setHeaders(selected);  // Only selected headers
+  const handleHeaderSelection = async (selected: string[]) => {
+    // Show loading immediately when user clicks Start Analysis
+    setIsProcessing(true);
     setShowHeaderSelection(false);
-
-    // Filter data to only include selected headers
-    const selectedIndices = selected.map(h => allHeaders.indexOf(h));
-    const filteredData = data.map(row => 
-      selectedIndices.map(idx => row[idx])
-    );
-    setData(filteredData);
     
-    // Perform analysis with ONLY selected headers
-    // Item-level detection will suggest which go to SKU-level
-    runAnalysis(selected, filteredData);
+    // Use setTimeout to allow UI to update before heavy data processing
+    setTimeout(async () => {
+      try {
+        setSelectedHeaders(selected);
+        setHeaders(selected);  // Only selected headers
+
+        // Filter data to only include selected headers
+        const selectedIndices = selected.map(h => allHeaders.indexOf(h));
+        const filteredData = data.map(row => 
+          selectedIndices.map(idx => row[idx])
+        );
+        setData(filteredData);
+        setIsProcessing(false); // Data filtering done, now analysis starts
+        
+        // Perform analysis with ONLY selected headers
+        // Item-level detection will suggest which go to SKU-level
+        await runAnalysis(selected, filteredData);
+      } catch (error) {
+        setIsProcessing(false);
+        console.error('Error during header selection:', error);
+      }
+    }, 50);
   };
 
-  const runAnalysis = (
+  const runAnalysis = async (
     headersToAnalyze: string[], 
     dataToAnalyze: any[][], 
     customThresholds?: { parent: number; childrenMin: number; childrenMax: number; sku: number; minPropertiesPerLevel?: number },
     selectedHeaders?: string[],  // Optional: user-selected headers for preference
     forcedHeaders?: string[]  // Optional: user-forced SKU-level headers
   ) => {
-    // Perform analysis with ALL headers
-    // Pass forced headers to maintain user selections across threshold changes
-    const result = analyzeProductData(headersToAnalyze, dataToAnalyze, customThresholds, forcedHeaders);
-    setAnalysisResult(result);
-    
-    // CRITICAL: Store original analysis result for reset functionality
-    // Only store on FIRST analysis (when originalAnalysisResult is null)
-    if (!originalAnalysisResult) {
-      const clonedResult = JSON.parse(JSON.stringify(result));
-      setOriginalAnalysisResult(clonedResult);
-      console.log('📦 Stored original analysis result for reset');
+    try {
+      // Use Web Worker for analysis - runs in separate thread to avoid blocking UI
+      const result = await analyzeInWorker(headersToAnalyze, dataToAnalyze, customThresholds, forcedHeaders);
+      setAnalysisResult(result);
+      
+      // CRITICAL: Store original analysis result for reset functionality
+      // Only store on FIRST analysis (when originalAnalysisResult is null)
+      if (!originalAnalysisResult) {
+        const clonedResult = JSON.parse(JSON.stringify(result));
+        setOriginalAnalysisResult(clonedResult);
+        console.log('📦 Stored original analysis result for reset');
+      }
+      
+      // CRITICAL: Store original presets from initial analysis
+      // These should NOT be affected by subsequent forcing operations
+      if (result.hierarchyPresets && result.hierarchyPresets.length > 0) {
+        // Deep clone to prevent mutations
+        const clonedPresets = JSON.parse(JSON.stringify(result.hierarchyPresets));
+        setOriginalPresets(clonedPresets);
+        console.log('📦 Stored original presets:', clonedPresets.length);
+      }
+
+      // Build taxonomy tree - use custom config if available, otherwise automatic
+      const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
+        ? buildCustomTaxonomyTree(taxonomyConfig, dataToAnalyze, headersToAnalyze)
+        : buildTaxonomyTree(result.hierarchy, dataToAnalyze, headersToAnalyze);
+      setTaxonomyTree(tree);
+
+      // Validate data quality with Salsify compliance checks
+      // CRITICAL: Pass allHeaders to detect duplicate column names in original file
+      const hierarchyHeaders = result.hierarchy.flatMap(h => h.headers);
+      const validation = validateData(
+        headersToAnalyze, 
+        dataToAnalyze, 
+        hierarchyHeaders,
+        result.recordIdSuggestion || undefined,
+        result.recordNameSuggestion || undefined,
+        allHeaders // Original headers including duplicates
+      );
+      setValidationResult(validation);
+
+      toast({
+        title: 'Analysis Complete',
+        description: `Analyzed ${headersToAnalyze.length} attributes from ${dataToAnalyze.length} products.`,
+      });
+    } catch (error) {
+      console.error('Analysis error:', error);
+      toast({
+        title: 'Analysis Error',
+        description: 'An error occurred during analysis. Please try again.',
+        variant: 'destructive',
+      });
     }
-    
-    // CRITICAL: Store original presets from initial analysis
-    // These should NOT be affected by subsequent forcing operations
-    if (result.hierarchyPresets && result.hierarchyPresets.length > 0) {
-      // Deep clone to prevent mutations
-      const clonedPresets = JSON.parse(JSON.stringify(result.hierarchyPresets));
-      setOriginalPresets(clonedPresets);
-      console.log('📦 Stored original presets:', clonedPresets.length);
-    }
-
-    // Build taxonomy tree - use custom config if available, otherwise automatic
-    const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
-      ? buildCustomTaxonomyTree(taxonomyConfig, dataToAnalyze, headersToAnalyze)
-      : buildTaxonomyTree(result.hierarchy, dataToAnalyze, headersToAnalyze);
-    setTaxonomyTree(tree);
-
-    // Validate data quality with Salsify compliance checks
-    // CRITICAL: Pass allHeaders to detect duplicate column names in original file
-    const hierarchyHeaders = result.hierarchy.flatMap(h => h.headers);
-    const validation = validateData(
-      headersToAnalyze, 
-      dataToAnalyze, 
-      hierarchyHeaders,
-      result.recordIdSuggestion || undefined,
-      result.recordNameSuggestion || undefined,
-      allHeaders // Original headers including duplicates
-    );
-    setValidationResult(validation);
-
-    toast({
-      title: 'Analysis Complete',
-      description: `Analyzed ${headersToAnalyze.length} attributes from ${dataToAnalyze.length} products.`,
-    });
   };
 
 
@@ -663,6 +696,52 @@ const Index = () => {
             />
           )}
 
+          {/* Loading Overlay - Shows while processing or analyzing */}
+          {showLoading && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-card p-8 rounded-xl shadow-elevated flex flex-col items-center gap-5 min-w-[360px]"
+              >
+                <div className="relative">
+                  <Loader2 className="w-12 h-12 text-primary animate-spin" />
+                </div>
+                <div className="text-center space-y-1">
+                  <h3 className="text-lg font-semibold">
+                    {isProcessing ? 'Preparing Data...' : 'Analyzing Data'}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {data.length.toLocaleString()} products • {allHeaders.length || headers.length} attributes
+                  </p>
+                </div>
+                {/* Real progress bar */}
+                <div className="w-full space-y-2">
+                  <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
+                    <motion.div 
+                      className="h-full bg-primary rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: isProcessing ? '10%' : `${progress.percent}%` }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                    />
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">
+                      {isProcessing ? 'Filtering selected columns...' : progress.step}
+                    </span>
+                    <span className="font-medium text-primary">
+                      {isProcessing ? '10%' : `${progress.percent}%`}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
           
           {!showHeaderSelection && data.length > 0 && (
             <>

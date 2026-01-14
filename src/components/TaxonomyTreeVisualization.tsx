@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
@@ -95,7 +95,7 @@ const TreeNode = ({ node, depth }: TreeNodeProps) => {
   );
 };
 
-export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationProps) => {
+export const TaxonomyTreeVisualization = memo(({ tree }: TaxonomyTreeVisualizationProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
   const countTotalNodes = (node: TaxonomyTreeNode): number => {
@@ -207,4 +207,4 @@ export const TaxonomyTreeVisualization = ({ tree }: TaxonomyTreeVisualizationPro
       </Card>
     </motion.div>
   );
-};
+});
