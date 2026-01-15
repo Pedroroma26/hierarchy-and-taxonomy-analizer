@@ -81,6 +81,20 @@ export const validateData = (
 };
 
 /**
+ * Convert column number (1-indexed) to Excel column letter (A, B, C, ..., Z, AA, AB, etc.)
+ */
+const columnNumberToExcelLetter = (colNum: number): string => {
+  let result = '';
+  let num = colNum;
+  while (num > 0) {
+    const remainder = (num - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    num = Math.floor((num - 1) / 26);
+  }
+  return result;
+};
+
+/**
  * Detect duplicate column headers in the Excel file
  * This is CRITICAL because Excel allows duplicate headers but only first occurrence is analyzed
  */
@@ -102,8 +116,9 @@ const detectDuplicateHeaders = (headers: string[]): DataValidationWarning[] => {
     .filter(([name, positions]) => name !== '' && positions.length > 1);
   
   if (duplicates.length > 0) {
+    // Convert column numbers to Excel letters (A, B, C, ..., Z, AA, AB, etc.)
     const examples = duplicates.slice(0, 5).map(([name, positions]) => 
-      `"${name}" in columns ${positions.join(', ')}`
+      `"${name}" in columns ${positions.map(p => columnNumberToExcelLetter(p)).join(', ')}`
     );
     
     const allAffectedColumns = duplicates.flatMap(([_, positions]) => positions);
