@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronRight, ChevronDown, Database, Layers, Tag, Pencil, Check, X, ArrowUpDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, Database, Layers, Tag, Pencil, Check, X, ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { HierarchyLevel } from '@/types';
 import {
   Select,
@@ -270,6 +270,19 @@ export const HierarchyProposal = memo(({ hierarchy, properties, propertiesWithou
                       <h3 className="font-semibold text-lg">
                         Level {level.level}: {level.name}
                       </h3>
+                      {/* Warning badge for levels with few properties */}
+                      {(() => {
+                        const totalProps = level.headers.length + (level.recordId ? 1 : 0) + (level.recordName ? 1 : 0);
+                        if (totalProps < 6 && index < hierarchy.length - 1) {
+                          return (
+                            <Badge variant="outline" className="bg-amber-500/20 text-amber-200 border-amber-400/50 text-xs flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              {totalProps} properties
+                            </Badge>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                     
                     {/* Record ID and Name - MANDATORY for all levels - EDITABLE */}
