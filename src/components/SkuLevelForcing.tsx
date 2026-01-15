@@ -298,7 +298,7 @@ export const SkuLevelForcing = memo(({ headers, currentHierarchy, onApply, reset
               <h2 className="text-2xl font-semibold flex items-center gap-2">
                 {isExpanded ? <ChevronDown className="w-6 h-6" /> : <ChevronRight className="w-6 h-6" />}
                 <Package className="w-6 h-6 text-primary" />
-                Force Properties to SKU-Level
+                Force Properties to Variant Level
               </h2>
               <Badge variant="secondary" className="text-lg px-4 py-1">
                 {forcedProperties.length} properties selected
