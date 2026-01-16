@@ -1,4 +1,4 @@
-import { useState, memo, useMemo, useCallback } from 'react';
+import { useState, memo, useMemo, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
@@ -34,6 +34,13 @@ export const TaxonomyBuilder = memo(({
     initialConfig?.levels || []
   );
   const [useCustomTaxonomy, setUseCustomTaxonomy] = useState(false);
+
+  // Sync with initialConfig when it changes (e.g., on reset)
+  useEffect(() => {
+    const newLevels = initialConfig?.levels || [];
+    setLevels(newLevels);
+    setUseCustomTaxonomy(newLevels.length > 0);
+  }, [initialConfig]);
 
   const addLevel = () => {
     if (levels.length >= 3) return; // Max 3 levels

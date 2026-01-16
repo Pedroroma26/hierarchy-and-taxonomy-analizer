@@ -5,7 +5,7 @@ import { FileUpload } from '@/components/FileUpload';
 import { DataPreview } from '@/components/DataPreview';
 import { CardinalityAnalysis } from '@/components/CardinalityAnalysis';
 import { HierarchyProposal } from '@/components/HierarchyProposal';
-import { PropertyRecommendations } from '@/components/PropertyRecommendations';
+import { PropertyRecommendations, DataTypeOverride, SalsifyDataType } from '@/components/PropertyRecommendations';
 import { HeaderSelector } from '@/components/HeaderSelector';
 import { TaxonomyTreeVisualization } from '@/components/TaxonomyTreeVisualization';
 import { TaxonomyBuilder, TaxonomyConfig } from '@/components/TaxonomyBuilder';
@@ -47,6 +47,7 @@ const Index = () => {
   const [originalPresets, setOriginalPresets] = useState<any[]>([]); // Store original presets from initial analysis
   const [originalAnalysisResult, setOriginalAnalysisResult] = useState<AnalysisResult | null>(null); // Store original analysis for reset
   const [isProcessing, setIsProcessing] = useState(false); // For data filtering before analysis
+  const [dataTypeOverrides, setDataTypeOverrides] = useState<DataTypeOverride>({}); // User overrides for data types
   const { toast } = useToast();
   
   // Web Worker for heavy analysis - runs in separate thread to avoid blocking UI
@@ -492,11 +493,11 @@ const Index = () => {
     setForcedSkuHeaders([]);
     setSelectedPreset(null);
     setPresetResetKey(prev => prev + 1);
+    setDataTypeOverrides({}); // Clear all data type overrides
+    setTaxonomyConfig(null); // Reset custom taxonomy configuration
     
-    // Rebuild taxonomy tree with original hierarchy
-    const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
-      ? buildCustomTaxonomyTree(taxonomyConfig, data, headers)
-      : buildTaxonomyTree(clonedResult.hierarchy, data, headers);
+    // Rebuild taxonomy tree with original hierarchy (always use default, not custom)
+    const tree = buildTaxonomyTree(clonedResult.hierarchy, data, headers);
     setTaxonomyTree(tree);
     
     // Revalidate with original data
@@ -516,7 +517,7 @@ const Index = () => {
     if (!analysisResult || !taxonomyTree) return;
 
     try {
-      generatePDFReport(analysisResult, headers, data, taxonomyTree, validationResult);
+      generatePDFReport(analysisResult, headers, data, taxonomyTree, validationResult, dataTypeOverrides);
       
       toast({
         title: 'PDF Export Successful',
@@ -716,6 +717,13 @@ const Index = () => {
                     propertyRecommendations={analysisResult.propertyRecommendations}
                     uomSuggestions={[]}
                     hierarchy={analysisResult.hierarchy}
+                    dataTypeOverrides={dataTypeOverrides}
+                    onDataTypeChange={(propertyName, newType) => {
+                      setDataTypeOverrides(prev => ({
+                        ...prev,
+                        [propertyName]: newType
+                      }));
+                    }}
                   />
                   
                   {/* CORE: Best Practices & Recommendations */}

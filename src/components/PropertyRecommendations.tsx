@@ -1,4 +1,4 @@
-import { useState, memo } from 'react';
+import { useState, memo, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -13,10 +13,37 @@ import {
   Ruler,
   ArrowRight,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Pencil
 } from 'lucide-react';
 import { PropertyRecommendation, UomSuggestion, RecordIdNameSuggestion } from '@/utils/analysisEngine';
 import { HierarchyLevel } from '@/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+// Salsify data types with descriptions
+export const SALSIFY_DATA_TYPES = [
+  { value: 'string', label: 'String', description: 'Plain text, alphanumeric and special characters' },
+  { value: 'picklist', label: 'Picklist/Category', description: 'Fixed set of values, hierarchical' },
+  { value: 'number', label: 'Number', description: 'Numeric characters only' },
+  { value: 'date', label: 'Date', description: 'yyyy-mm-dd format' },
+  { value: 'yes_no', label: 'Yes/No', description: 'Boolean (yes/no, true/false)' },
+  { value: 'rich_text', label: 'Rich Text', description: 'Text with formatting (bold, italic, lists)' },
+  { value: 'html', label: 'HTML', description: 'HTML formatted content' },
+  { value: 'link', label: 'Link', description: 'Clickable URL' },
+  { value: 'digital_asset', label: 'Digital Asset', description: 'Images, videos, documents' },
+] as const;
+
+export type SalsifyDataType = typeof SALSIFY_DATA_TYPES[number]['value'];
+
+export interface DataTypeOverride {
+  [propertyName: string]: SalsifyDataType;
+}
 
 interface PropertyRecommendationsProps {
   recordIdSuggestion: string | null;
@@ -25,6 +52,8 @@ interface PropertyRecommendationsProps {
   propertyRecommendations: PropertyRecommendation[];
   uomSuggestions: UomSuggestion[];
   hierarchy: HierarchyLevel[];
+  dataTypeOverrides?: DataTypeOverride;
+  onDataTypeChange?: (propertyName: string, newType: SalsifyDataType) => void;
 }
 
 export const PropertyRecommendations = memo(({
@@ -34,8 +63,47 @@ export const PropertyRecommendations = memo(({
   propertyRecommendations,
   uomSuggestions,
   hierarchy,
+  dataTypeOverrides = {},
+  onDataTypeChange,
 }: PropertyRecommendationsProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  
+  // Get effective data type (override or original)
+  const getEffectiveDataType = useCallback((rec: PropertyRecommendation): SalsifyDataType => {
+    return dataTypeOverrides[rec.header] || rec.dataType;
+  }, [dataTypeOverrides]);
+  
+  // Handle data type change
+  const handleDataTypeChange = useCallback((propertyName: string, newType: string) => {
+    if (onDataTypeChange) {
+      onDataTypeChange(propertyName, newType as SalsifyDataType);
+    }
+  }, [onDataTypeChange]);
+  
+  // Sort properties: L1 ID, L1 Name, L2 ID, L2 Name, L3 ID, L3 Name, then the rest by level ascending
+  const sortedPropertyRecommendations = useMemo(() => {
+    const getPropertyLevel = (header: string): number => {
+      for (const level of hierarchy) {
+        if (level.headers.includes(header) || level.recordId === header || level.recordName === header) {
+          return level.level;
+        }
+      }
+      return 0;
+    };
+    
+    const getSpecialSortKey = (header: string): number => {
+      // Returns a sort key: L1 ID=0, L1 Name=1, L2 ID=2, L2 Name=3, L3 ID=4, L3 Name=5, others=100+level
+      for (const level of hierarchy) {
+        if (level.recordId === header) return (level.level - 1) * 2; // 0, 2, 4
+        if (level.recordName === header) return (level.level - 1) * 2 + 1; // 1, 3, 5
+      }
+      return 100 + getPropertyLevel(header); // Others: 100+level
+    };
+    
+    return [...propertyRecommendations].sort((a, b) => {
+      return getSpecialSortKey(a.header) - getSpecialSortKey(b.header);
+    });
+  }, [propertyRecommendations, hierarchy]);
   
   // CRITICAL: Build suggestions directly from hierarchy to ensure alignment
   // This guarantees Record ID/Name match what's shown in Hierarchy Proposal
@@ -194,12 +262,15 @@ export const PropertyRecommendations = memo(({
               Data Type Analysis
             </h3>
             <div className="space-y-3">
-              {propertyRecommendations.map((rec, index) => {
+              {sortedPropertyRecommendations.map((rec, index) => {
                 // Check if this property is a Record ID or Record Name in any level
                 const recordIdLevel = hierarchy.find(level => level.recordId === rec.header);
                 const recordNameLevel = hierarchy.find(level => level.recordName === rec.header);
                 const isRecordId = !!recordIdLevel;
                 const isRecordName = !!recordNameLevel;
+                const effectiveType = getEffectiveDataType(rec);
+                const isOverridden = dataTypeOverrides[rec.header] !== undefined;
+                const hasLowConfidence = rec.confidence < 0.7;
                 
                 return (
                 <motion.div
@@ -212,7 +283,7 @@ export const PropertyRecommendations = memo(({
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
-                        {getDataTypeIcon(rec.dataType)}
+                        {getDataTypeIcon(effectiveType)}
                         <h4 className="font-medium">{rec.header}</h4>
                         {isRecordId && (
                           <Badge variant="default" className="bg-primary text-xs">
@@ -224,12 +295,43 @@ export const PropertyRecommendations = memo(({
                             Record Name (L{recordNameLevel?.level})
                           </Badge>
                         )}
+                        {hasLowConfidence && !isOverridden && (
+                          <Badge variant="outline" className="text-xs text-amber-600 border-amber-400">
+                            ⚠️ {rec.reasoning || 'Low confidence'}
+                          </Badge>
+                        )}
+                        {isOverridden && (
+                          <Badge variant="outline" className="text-xs text-blue-600 border-blue-400">
+                            <Pencil className="w-3 h-3 mr-1" />
+                            Modified
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="flex items-center gap-2">
-                        <Badge variant="secondary">
-                          {getDataTypeLabel(rec.dataType)}
-                        </Badge>
+                        {onDataTypeChange ? (
+                          <Select
+                            value={effectiveType}
+                            onValueChange={(value) => handleDataTypeChange(rec.header, value)}
+                          >
+                            <SelectTrigger className="w-[180px] h-8 text-sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SALSIFY_DATA_TYPES.map((type) => (
+                                <SelectItem key={type.value} value={type.value}>
+                                  <div className="flex flex-col">
+                                    <span>{type.label}</span>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant="secondary">
+                            {getDataTypeLabel(effectiveType)}
+                          </Badge>
+                        )}
                       </div>
 
                       {rec.isPicklist && rec.picklistValues && rec.picklistValues.length > 0 && (

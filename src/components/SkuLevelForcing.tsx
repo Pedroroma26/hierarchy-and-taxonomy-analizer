@@ -153,7 +153,7 @@ const propertyGroups = {
 };
 
 export const SkuLevelForcing = memo(({ headers, currentHierarchy, onApply, resetKey }: SkuLevelForcingProps) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [manuallySelected, setManuallySelected] = useState<Set<string>>(new Set());
   const [excludedFromGroups, setExcludedFromGroups] = useState<Set<string>>(new Set());

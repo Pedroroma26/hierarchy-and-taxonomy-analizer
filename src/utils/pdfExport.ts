@@ -63,7 +63,8 @@ export const generatePDFReport = (
   headers: string[],
   data: any[][],
   taxonomyTree: TaxonomyTreeNode,
-  validationResult?: any
+  validationResult?: any,
+  dataTypeOverrides?: { [propertyName: string]: string }
 ): void => {
   const doc = new jsPDF();
   let yPosition = 20;
@@ -109,7 +110,7 @@ export const generatePDFReport = (
   const modelType = selectedPreset?.modelType || 'Custom';
   const modelName = selectedPreset?.name || 'Custom Configuration';
 
-  // ===== PAGE 1: EXECUTIVE SUMMARY =====
+  // ===== SECTION 1: EXECUTIVE SUMMARY =====
   // Clean header bar
   doc.setFillColor(...COLORS.primary);
   doc.rect(0, 0, 210, 40, 'F');
@@ -183,190 +184,10 @@ export const generatePDFReport = (
   doc.setTextColor(...COLORS.black);
   yPosition += 30;
 
-  // ===== HIERARCHY VISUALIZATION (cleaner, lighter design) =====
-  const levelColors: { [key: number]: [number, number, number] } = {
-    1: [59, 130, 246],   // Blue for Level 1
-    2: [34, 197, 94],    // Green for Level 2
-    3: [239, 68, 68],    // Red for Level 3
-  };
+  // REMOVED: Hierarchy boxes visualization - replaced by Property Recommendations table
+  // The table provides cleaner, more scalable view of all properties with levels
 
-  const hierarchyLevelsList = analysisResult.hierarchy.filter(level => level.headers.length > 0);
-  
-  hierarchyLevelsList.forEach((level, levelIndex) => {
-      const levelColor = levelColors[level.level] || COLORS.primary;
-      const propsWithoutIdName = level.headers.filter(
-        h => h !== level.recordId && h !== level.recordName
-      );
-      const propsPerRow = 3;
-      const propRows = Math.ceil(propsWithoutIdName.length / propsPerRow);
-      const boxHeight = 55 + propRows * 12;
-      
-      checkPageBreak(boxHeight + 15);
-      
-      // Calculate starting Y for this box
-      const boxStartY = yPosition;
-      
-      // Level container with border only (lighter)
-      doc.setDrawColor(...levelColor);
-      doc.setLineWidth(1.5);
-      doc.roundedRect(15, boxStartY, 180, boxHeight, 6, 6, 'S');
-      
-      // Level title bar (clean, no overlay)
-      doc.setFillColor(...levelColor);
-      doc.rect(15, boxStartY, 180, 18, 'F');
-      // Round top corners only by overlaying
-      doc.setFillColor(...levelColor);
-      doc.roundedRect(15, boxStartY, 180, 12, 6, 6, 'F');
-      
-      // Level title
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...COLORS.white);
-      doc.text(`Level ${level.level}: ${level.name}`, 22, boxStartY + 12);
-      
-      // Record ID and Record Name (clean layout)
-      yPosition = boxStartY + 26;
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...COLORS.gray);
-      doc.text('Record ID:', 22, yPosition);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...levelColor);
-      doc.text(level.recordId || 'Not set', 50, yPosition);
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...COLORS.gray);
-      doc.text('Record Name:', 100, yPosition);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...levelColor);
-      doc.text(level.recordName || 'Not set', 138, yPosition);
-      
-      // Properties section
-      yPosition += 12;
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...COLORS.gray);
-      doc.text('Properties:', 22, yPosition);
-      yPosition += 8;
-      
-      // Properties as pills (bigger, more readable)
-      let propX = 22;
-      const maxWidth = 175;
-      
-      propsWithoutIdName.forEach(prop => {
-        doc.setFontSize(8);
-        const propWidth = doc.getTextWidth(prop) + 10;
-        
-        if (propX + propWidth > maxWidth) {
-          propX = 22;
-          yPosition += 11;
-        }
-        
-        // Light pill background
-        doc.setFillColor(...COLORS.grayLight);
-        doc.roundedRect(propX, yPosition - 6, propWidth, 9, 2, 2, 'F');
-        
-        // Property text
-        doc.setTextColor(...COLORS.black);
-        doc.text(prop, propX + 5, yPosition);
-        
-        propX += propWidth + 4;
-      });
-      
-      doc.setTextColor(...COLORS.black);
-      yPosition += 20;
-    });
-
-  // Add spacing after hierarchy boxes
-  yPosition += 5;
-
-  // ===== PAGE 2: TAXONOMY =====
-  doc.addPage();
-  yPosition = 25;
-  
-  addSectionTitle('Product Taxonomy');
-  
-  // Taxonomy Properties Legend
-  const taxonomyProps = taxonomyTree.taxonomyProperties || [];
-  if (taxonomyProps.length > 0) {
-    doc.setFillColor(...COLORS.grayLight);
-    doc.roundedRect(15, yPosition, 180, 20, 3, 3, 'F');
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.primary);
-    doc.text('Taxonomy Properties (per level):', 20, yPosition + 8);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...COLORS.black);
-    
-    const propsText = taxonomyProps.map((p, i) => `L${i + 1}: ${p}`).join('  |  ');
-    doc.text(propsText, 20, yPosition + 15);
-    yPosition += 28;
-  }
-  
-  // Taxonomy Validation Status (OK/NOK for parent level)
-  const level1Headers = analysisResult.hierarchy.find(h => h.level === 1)?.headers || [];
-  if (taxonomyProps.length > 0) {
-    const taxonomyOk = taxonomyProps.filter(p => level1Headers.includes(p));
-    const taxonomyNok = taxonomyProps.filter(p => !level1Headers.includes(p));
-    
-    const taxBgColor = taxonomyNok.length === 0 ? COLORS.successLight : COLORS.warningLight;
-    const taxColor = taxonomyNok.length === 0 ? COLORS.success : COLORS.warning;
-    
-    doc.setFillColor(...taxBgColor);
-    const boxHeight = 18 + (taxonomyOk.length > 0 ? 10 : 0) + (taxonomyNok.length > 0 ? 10 : 0);
-    doc.roundedRect(15, yPosition, 180, boxHeight, 3, 3, 'F');
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...taxColor);
-    doc.text('Taxonomy Property Placement', 22, yPosition + 10);
-    yPosition += 16;
-    
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    
-    if (taxonomyOk.length > 0) {
-      doc.setTextColor(...COLORS.success);
-      doc.text(`✓ At Parent Level: ${taxonomyOk.join(', ')}`, 25, yPosition);
-      yPosition += 10;
-    }
-    if (taxonomyNok.length > 0) {
-      doc.setTextColor(...COLORS.danger);
-      doc.text(`✗ Not at Parent Level: ${taxonomyNok.join(', ')}`, 25, yPosition);
-      yPosition += 10;
-    }
-    
-    yPosition += 8;
-  }
-  
-  addSubtitle('Product category tree visualization');
-  
-  const treeAscii = treeToCleanAscii(taxonomyTree);
-  const treeLines = treeAscii.split('\n').slice(0, 50);
-  
-  doc.setFont('courier', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...COLORS.black);
-  
-  treeLines.forEach(line => {
-    if (checkPageBreak(5)) {
-      doc.setFont('courier', 'normal');
-      doc.setFontSize(8);
-    }
-    doc.text(line.substring(0, 100), 15, yPosition);
-    yPosition += 4;
-  });
-  
-  if (treeLines.length >= 50) {
-    yPosition += 3;
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(8);
-    doc.setTextColor(...COLORS.gray);
-    doc.text('(Tree truncated - full tree available in application)', 15, yPosition);
-    doc.setTextColor(...COLORS.black);
-  }
-
-  // ===== PAGE 4: ALL PROPERTIES =====
+  // ===== SECTION 2: ALL PROPERTIES =====
   doc.addPage();
   yPosition = 25;
   
@@ -412,6 +233,11 @@ export const generatePDFReport = (
     return 2;
   };
 
+  // Helper to get effective data type (override or original)
+  const getEffectiveDataType = (prop: { header: string; dataType: string }): string => {
+    return dataTypeOverrides?.[prop.header] || prop.dataType;
+  };
+
   // Sort properties by: 1) Level, 2) Role (ID first, Name second, others last)
   const sortedPropertyData = analysisResult.propertyRecommendations
     .map(prop => {
@@ -419,10 +245,11 @@ export const generatePDFReport = (
       const levelText = getPropertyLevelText(prop.header);
       const role = getPropertyRole(prop.header);
       const rolePriority = getRolePriority(role);
+      const effectiveType = getEffectiveDataType(prop);
       return {
         data: [
           prop.header,
-          prop.dataType,
+          effectiveType,
           levelText,
           role
         ],
@@ -431,9 +258,9 @@ export const generatePDFReport = (
       };
     })
     .sort((a, b) => {
-      // First sort by level
+      // First sort by level ASCENDING (L1 first, then L2, then L3)
       if (a.levelNum !== b.levelNum) return a.levelNum - b.levelNum;
-      // Then sort by role priority
+      // Within same level, sort by role priority (Record ID first, then Record Name, then others)
       return a.rolePriority - b.rolePriority;
     })
     .map(item => item.data);
@@ -471,7 +298,123 @@ export const generatePDFReport = (
     }
   });
 
-  // ===== PAGE 4: DATA QUALITY & RECOMMENDATIONS =====
+  // ===== SECTION 3: TAXONOMY =====
+  doc.addPage();
+  yPosition = 25;
+  
+  addSectionTitle('Product Taxonomy');
+  
+  // Taxonomy Properties Legend
+  const taxonomyProps = taxonomyTree.taxonomyProperties || [];
+  if (taxonomyProps.length > 0) {
+    doc.setFillColor(...COLORS.grayLight);
+    doc.roundedRect(15, yPosition, 180, 20, 3, 3, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.primary);
+    doc.text('Taxonomy Properties (per level):', 20, yPosition + 8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.black);
+    
+    const propsText = taxonomyProps.map((p, i) => `L${i + 1}: ${p}`).join('  |  ');
+    doc.text(propsText, 20, yPosition + 15);
+    yPosition += 28;
+  }
+  
+  // Taxonomy Validation Status (OK/NOK for parent level)
+  const level1Headers = analysisResult.hierarchy.find(h => h.level === 1)?.headers || [];
+  if (taxonomyProps.length > 0) {
+    const taxonomyOk = taxonomyProps.filter(p => level1Headers.includes(p));
+    const taxonomyNok = taxonomyProps.filter(p => !level1Headers.includes(p));
+    
+    const taxBgColor = taxonomyNok.length === 0 ? COLORS.successLight : COLORS.warningLight;
+    const taxColor = taxonomyNok.length === 0 ? COLORS.success : COLORS.warning;
+    
+    // Calculate dynamic box height based on text wrapping
+    const maxTextWidth = 165; // Leave margin inside box
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    
+    const okText = taxonomyOk.length > 0 ? taxonomyOk.join(', ') : '';
+    const nokText = taxonomyNok.length > 0 ? taxonomyNok.join(', ') : '';
+    
+    // Calculate lines needed for each section
+    const okLines = okText ? doc.splitTextToSize(okText, maxTextWidth) : [];
+    const nokLines = nokText ? doc.splitTextToSize(nokText, maxTextWidth) : [];
+    
+    const lineHeight = 5;
+    const okHeight = okLines.length > 0 ? 12 + (okLines.length * lineHeight) : 0;
+    const nokHeight = nokLines.length > 0 ? 12 + (nokLines.length * lineHeight) : 0;
+    const boxHeight = 20 + okHeight + nokHeight;
+    
+    doc.setFillColor(...taxBgColor);
+    doc.roundedRect(15, yPosition, 180, boxHeight, 3, 3, 'F');
+    
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...taxColor);
+    doc.text('Taxonomy Property Placement', 22, yPosition + 12);
+    yPosition += 20;
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    
+    if (taxonomyOk.length > 0) {
+      doc.setTextColor(...COLORS.success);
+      doc.setFont('helvetica', 'bold');
+      doc.text('At Parent Level:', 25, yPosition);
+      doc.setFont('helvetica', 'normal');
+      yPosition += 6;
+      okLines.forEach((line: string) => {
+        doc.text(line, 25, yPosition);
+        yPosition += lineHeight;
+      });
+      yPosition += 4;
+    }
+    if (taxonomyNok.length > 0) {
+      doc.setTextColor(...COLORS.danger);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Not at Parent Level:', 25, yPosition);
+      doc.setFont('helvetica', 'normal');
+      yPosition += 6;
+      nokLines.forEach((line: string) => {
+        doc.text(line, 25, yPosition);
+        yPosition += lineHeight;
+      });
+      yPosition += 4;
+    }
+    
+    yPosition += 8;
+  }
+  
+  addSubtitle('Product category tree visualization');
+  
+  const treeAscii = treeToCleanAscii(taxonomyTree);
+  const treeLines = treeAscii.split('\n').slice(0, 50);
+  
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.black);
+  
+  treeLines.forEach(line => {
+    if (checkPageBreak(5)) {
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(8);
+    }
+    doc.text(line.substring(0, 100), 15, yPosition);
+    yPosition += 4;
+  });
+  
+  if (treeLines.length >= 50) {
+    yPosition += 3;
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(...COLORS.gray);
+    doc.text('(Tree truncated - full tree available in application)', 15, yPosition);
+    doc.setTextColor(...COLORS.black);
+  }
+
+  // ===== SECTION 4: DATA QUALITY & RECOMMENDATIONS =====
   doc.addPage();
   yPosition = 25;
   

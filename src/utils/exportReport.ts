@@ -65,7 +65,13 @@ export const buildTaxonomyTree = (
   };
 
   // Helper: Score header for taxonomy tree (prefer SHORT names 1-2 words, not codes)
+  // OPTIMIZED: Sample only first 100 rows for scoring to avoid O(n²) performance
+  const SAMPLE_SIZE = Math.min(100, data.length);
+  const sampleData = data.slice(0, SAMPLE_SIZE);
+  
   const scoreHeaderForTaxonomy = (header: string, headerIndex: number): number => {
+    if (headerIndex === -1) return -1000; // Header not found
+    
     let score = 0;
     const lower = header.toLowerCase();
     
@@ -78,15 +84,16 @@ export const buildTaxonomyTree = (
     if (lower.includes('code') || lower.includes('id') || lower.includes('number')) score -= 50;
     if (/^[a-z]\d+$/i.test(header)) score -= 30; // L1, L2, etc.
     
-    // Count text-based values
-    const textCount = data.filter(row => isTextBased(row[headerIndex])).length;
-    score += textCount / data.length * 50; // 0-50 points based on text ratio
+    // Count text-based values (using sample)
+    const textCount = sampleData.filter(row => isTextBased(row[headerIndex])).length;
+    score += textCount / sampleData.length * 50; // 0-50 points based on text ratio
     
-    // CRITICAL: Prefer SHORT values (1-2 words)
-    const avgWordCount = data.reduce((sum, row) => {
-      const value = row[headerIndex];
-      return sum + countWords(value);
-    }, 0) / data.length;
+    // CRITICAL: Prefer SHORT values (1-2 words) - using sample
+    let totalWords = 0;
+    for (let i = 0; i < sampleData.length; i++) {
+      totalWords += countWords(sampleData[i][headerIndex]);
+    }
+    const avgWordCount = totalWords / sampleData.length;
     
     // Bonus for 1-2 word averages, penalty for long phrases
     if (avgWordCount <= 2) score += 100; // HUGE bonus for short names

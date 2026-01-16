@@ -28,6 +28,12 @@ interface CardinalityAnalysisProps {
 export const CardinalityAnalysis = memo(({ scores, thresholds }: CardinalityAnalysisProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   
+  // Sort scores by level: Level 1 first, then Level 2, then Level 3 (SKU)
+  const sortedScores = [...scores].sort((a, b) => {
+    const levelOrder = { 'level1': 1, 'level2': 2, 'level3': 3 };
+    return levelOrder[a.classification] - levelOrder[b.classification];
+  });
+  
   const getClassificationColor = (classification: string) => {
     switch (classification) {
       case 'level1':
@@ -89,7 +95,7 @@ export const CardinalityAnalysis = memo(({ scores, thresholds }: CardinalityAnal
 
           {isExpanded && (
           <div className="space-y-4">
-            {scores.map((score, index) => (
+            {sortedScores.map((score, index) => (
               <motion.div
                 key={score.header}
                 initial={{ opacity: 0, x: -20 }}

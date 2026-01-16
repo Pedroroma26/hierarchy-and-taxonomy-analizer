@@ -2253,11 +2253,25 @@ const analyzePropertyTypes = (
     let confidence = 0.5;
     let reasoning = '';
     
-    // Check if yes/no (highest priority for boolean fields)
-    if (score.uniqueCount <= 5) {
-      const uniqueValues = Array.from(new Set(columnData.map(v => String(v).toLowerCase())));
-      const yesNoPatterns = ['yes', 'no', 'true', 'false', 'y', 'n', '1', '0', 'sim', 'n\u00e3o'];
-      if (uniqueValues.every(v => yesNoPatterns.includes(v))) {
+    // Check if yes/no (STRICT: only for actual boolean fields)
+    // Must have exactly 2 unique values that are clear boolean pairs
+    if (score.uniqueCount === 2) {
+      const uniqueValues = Array.from(new Set(columnData.map(v => String(v).toLowerCase().trim())));
+      const booleanPairs = [
+        ['yes', 'no'],
+        ['true', 'false'],
+        ['y', 'n'],
+        ['t', 'f'],
+        ['1', '0'],
+        ['sim', 'não'],
+        ['si', 'no'],
+        ['oui', 'non'],
+      ];
+      const isBooleanPair = booleanPairs.some(pair => 
+        (uniqueValues.includes(pair[0]) && uniqueValues.includes(pair[1])) ||
+        (uniqueValues.length === 2 && uniqueValues.every(v => pair.includes(v)))
+      );
+      if (isBooleanPair) {
         dataType = 'yes_no';
         confidence = 0.95;
         reasoning = 'Boolean values detected (yes/no, true/false)';
@@ -2288,17 +2302,46 @@ const analyzePropertyTypes = (
       }
     }
     
+    // FIRST: Check if column name suggests a numeric type (weight, length, width, depth, quantity, etc.)
+    const numericKeywords = [
+      'weight', 'length', 'width', 'depth', 'height', 'quantity', 'qty', 'count',
+      'price', 'cost', 'amount', 'size', 'dimension', 'volume', 'capacity',
+      'rating', 'score', 'index', 'number', 'num', 'id', 'code',
+      '(lb)', '(kg)', '(g)', '(oz)', '(in)', '(cm)', '(mm)', '(m)', '(ft)',
+      '(l)', '(ml)', '(gal)', '(%)'
+    ];
+    const looksLikeNumber = numericKeywords.some(kw => headerLower.includes(kw));
+    
     // Check if number (before picklist to avoid numeric picklists being misclassified)
     const numericCount = columnData.filter(val => !isNaN(Number(val))).length;
-    if (numericCount / columnData.length > 0.9 && score.uniqueCount > 10) {
+    
+    // If column name suggests numeric OR data is mostly numeric, classify as number
+    if (columnData.length > 0 && numericCount / columnData.length > 0.7) {
       dataType = 'number';
       confidence = 0.9;
       reasoning = 'Numeric values detected';
       return { header, dataType, isPicklist, picklistValues, confidence, reasoning };
     }
     
+    // If column name suggests numeric but no data, infer as number with low confidence
+    if (columnData.length === 0 && looksLikeNumber) {
+      dataType = 'number';
+      confidence = 0.6;
+      reasoning = 'Inferred from column name (no data available)';
+      return { header, dataType, isPicklist, picklistValues, confidence, reasoning };
+    }
+    
+    // If no data at all, return string with warning
+    if (columnData.length === 0) {
+      dataType = 'string';
+      confidence = 0.3;
+      reasoning = 'Insufficient data for analysis';
+      return { header, dataType, isPicklist, picklistValues, confidence, reasoning };
+    }
+    
     // Check if picklist (low-medium cardinality, limited unique values)
-    if (score.uniqueCount <= 50 && score.cardinality < 0.3) {
+    // BUT only if we have enough data and it's not a numeric-looking column
+    if (score.uniqueCount <= 50 && score.cardinality < 0.3 && !looksLikeNumber && score.uniqueCount >= 2) {
       isPicklist = true;
       dataType = 'picklist';
       picklistValues = Array.from(new Set(columnData.map(v => String(v)))).slice(0, 50);
