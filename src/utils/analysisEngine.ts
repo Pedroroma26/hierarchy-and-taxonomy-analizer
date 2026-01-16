@@ -2243,7 +2243,17 @@ const analyzePropertyTypes = (
 ): PropertyRecommendation[] => {
   return headers.map((header, index) => {
     const columnData = data.map(row => row[index]).filter(val => val !== null && val !== undefined && val !== '');
-    const score = cardinalityScores.find(s => s.header === header)!;
+    // Fallback score if header not found - safe defaults that classify as SKU-level string
+    const defaultScore: CardinalityScore = {
+      header,
+      uniqueCount: columnData.length,
+      totalCount: data.length,
+      cardinality: columnData.length > 0 ? 1 : 0, // High cardinality = SKU level
+      completeness: columnData.length / data.length,
+      hierarchyScore: 0, // Low score = not for hierarchy
+      classification: 'level3' as const // SKU level - safest default
+    };
+    const score = cardinalityScores.find(s => s.header === header) || defaultScore;
     const headerLower = header.toLowerCase();
     
     // Determine data type
@@ -2303,10 +2313,11 @@ const analyzePropertyTypes = (
     }
     
     // FIRST: Check if column name suggests a numeric type (weight, length, width, depth, quantity, etc.)
+    // NOTE: 'id' and 'code' removed - IDs should be String to preserve leading zeros
     const numericKeywords = [
       'weight', 'length', 'width', 'depth', 'height', 'quantity', 'qty', 'count',
       'price', 'cost', 'amount', 'size', 'dimension', 'volume', 'capacity',
-      'rating', 'score', 'index', 'number', 'num', 'id', 'code',
+      'rating', 'index', 'number', 'num',
       '(lb)', '(kg)', '(g)', '(oz)', '(in)', '(cm)', '(mm)', '(m)', '(ft)',
       '(l)', '(ml)', '(gal)', '(%)'
     ];
