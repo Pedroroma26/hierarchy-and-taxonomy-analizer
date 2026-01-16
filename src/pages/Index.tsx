@@ -540,10 +540,10 @@ const Index = () => {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-                Product Taxonomy Analyzer
+                Client Data Analyzer
               </h1>
               <p className="text-muted-foreground mt-1">
-                Data-driven hierarchy and taxonomy proposer
+                Intelligent structure detection for client data
               </p>
             </div>
             {analysisResult && (
@@ -735,7 +735,7 @@ const Index = () => {
       {/* Footer */}
       <footer className="border-t bg-card/50 backdrop-blur-sm mt-16">
         <div className="container mx-auto px-6 py-8 text-center text-muted-foreground">
-          <p>Product Taxonomy Analyzer - Automate your product catalog structuring</p>
+          <p>Client Data Analyzer - Intelligent structure detection for client data</p>
         </div>
       </footer>
     </div>
