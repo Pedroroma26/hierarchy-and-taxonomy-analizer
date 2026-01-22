@@ -1831,8 +1831,17 @@ const generateHierarchyPresets = (
     
     // Level 3: Variant/SKU
     const var3Headers = variantSkuHeaders.filter(h => !usedInPresetC.has(h));
-    const var3RecordId = actualHierarchy[actualHierarchy.length - 1]?.recordId || findRecordIdForPreset(var3Headers, true);
-    const var3RecordName = actualHierarchy[actualHierarchy.length - 1]?.recordName || findRecordNameForPreset(var3Headers, var3RecordId, usedNamesInPresetC);
+    // CRITICAL: Check if the original Record ID is already used in another level before using it
+    const originalVar3RecordId = actualHierarchy[actualHierarchy.length - 1]?.recordId;
+    const var3RecordId = (originalVar3RecordId && !usedInPresetC.has(originalVar3RecordId))
+      ? originalVar3RecordId
+      : findRecordIdForPreset(var3Headers, true);
+    usedInPresetC.add(var3RecordId);
+    // CRITICAL: Check if the original Record Name is already used in another level before using it
+    const originalVar3RecordName = actualHierarchy[actualHierarchy.length - 1]?.recordName;
+    const var3RecordName = (originalVar3RecordName && !usedNamesInPresetC.includes(originalVar3RecordName))
+      ? originalVar3RecordName
+      : findRecordNameForPreset(var3Headers, var3RecordId, usedNamesInPresetC);
     
     presets.push({
       name: 'Multi-Level PIM',

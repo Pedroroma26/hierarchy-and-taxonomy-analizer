@@ -14,7 +14,7 @@ import { BestPracticesRecommendations } from '@/components/BestPracticesRecommen
 import { PresetSelector } from '@/components/PresetSelector';
 import { SkuLevelForcing } from '@/components/SkuLevelForcing';
 import { AnalysisResult } from '@/utils/analysisEngine';
-import { generateExportReport, buildTaxonomyTree, buildCustomTaxonomyTree } from '@/utils/exportReport';
+import { generateExportReport, buildTaxonomyTree, buildCustomTaxonomyTree, TaxonomyTreeNode } from '@/utils/exportReport';
 import { validateData } from '@/utils/dataValidation';
 import { generatePDFReport } from '@/utils/pdfExport';
 import { useToast } from '@/hooks/use-toast';
@@ -46,6 +46,7 @@ const Index = () => {
   const [presetResetKey, setPresetResetKey] = useState<number>(0); // Increment to reset SkuLevelForcing
   const [originalPresets, setOriginalPresets] = useState<any[]>([]); // Store original presets from initial analysis
   const [originalAnalysisResult, setOriginalAnalysisResult] = useState<AnalysisResult | null>(null); // Store original analysis for reset
+  const [originalTaxonomyTree, setOriginalTaxonomyTree] = useState<TaxonomyTreeNode | null>(null); // Store original taxonomy for consistency across presets
   const [isProcessing, setIsProcessing] = useState(false); // For data filtering before analysis
   const [dataTypeOverrides, setDataTypeOverrides] = useState<DataTypeOverride>({}); // User overrides for data types
   const { toast } = useToast();
@@ -196,6 +197,13 @@ const Index = () => {
         ? buildCustomTaxonomyTree(taxonomyConfig, dataToAnalyze, headersToAnalyze)
         : buildTaxonomyTree(result.hierarchy, dataToAnalyze, headersToAnalyze);
       setTaxonomyTree(tree);
+      
+      // CRITICAL: Store original taxonomy tree for consistency across presets
+      // This ensures the taxonomy doesn't change when switching between presets
+      if (!originalTaxonomyTree) {
+        setOriginalTaxonomyTree(tree);
+        console.log('📦 Stored original taxonomy tree for preset consistency');
+      }
 
       // Validate data quality with Salsify compliance checks
       // CRITICAL: Pass allHeaders to detect duplicate column names in original file
@@ -454,10 +462,12 @@ const Index = () => {
     
     setAnalysisResult(updatedResult);
     
-    // Rebuild taxonomy tree with new hierarchy - use custom config if available
+    // CRITICAL: Use ORIGINAL taxonomy tree for consistency across all presets
+    // Only rebuild if user has custom taxonomy config set
+    // This prevents taxonomy from changing when switching between Flat/Parent-Variant/Multi-Level
     const tree = taxonomyConfig && taxonomyConfig.levels.length > 0
       ? buildCustomTaxonomyTree(taxonomyConfig, data, headers)
-      : buildTaxonomyTree(preset.hierarchy, data, headers);
+      : originalTaxonomyTree || buildTaxonomyTree(preset.hierarchy, data, headers);
     setTaxonomyTree(tree);
     
     // Revalidate data with Salsify compliance checks
@@ -499,6 +509,7 @@ const Index = () => {
     // Rebuild taxonomy tree with original hierarchy (always use default, not custom)
     const tree = buildTaxonomyTree(clonedResult.hierarchy, data, headers);
     setTaxonomyTree(tree);
+    setOriginalTaxonomyTree(tree); // Also update original taxonomy for future preset switches
     
     // Revalidate with original data
     const hierarchyHeaders = clonedResult.hierarchy.flatMap((h: any) => h.headers);
